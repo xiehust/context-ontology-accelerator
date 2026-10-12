@@ -94,7 +94,9 @@ def _get_s3():
         # ``Content-Type: text/turtle`` (SignatureDoesNotMatch / 403). SigV4 only
         # signs declared headers, so the browser may send any Content-Type — which
         # is what the presign_proposal_artifact_put contract relies on.
-        _s3 = boto3.client("s3", region_name=REGION, config=Config(signature_version="s3v4"))
+        _s3 = boto3.client(
+            "s3", region_name=REGION, config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"})
+        )
     return _s3
 
 

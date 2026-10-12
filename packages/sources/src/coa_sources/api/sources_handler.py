@@ -228,7 +228,15 @@ def _get_s3():
         # and SigV2-only regions can't presign at all. Only ContentType is
         # signed (see document_routes._handle_upload_urls), so browser PUTs
         # stay valid under SigV4.
-        _s3 = boto3.client("s3", region_name=_AWS_REGION, config=Config(signature_version="s3v4"))
+        #
+        # Virtual-hosted addressing is explicit on purpose: with SigV4 alone botocore
+        # presigns against the global ``<bucket>.s3.amazonaws.com`` host, which 307-redirects
+        # for any bucket outside us-east-1. The redirect carries no CORS headers, so the
+        # browser's PUT to the presigned URL fails. ``virtual`` yields
+        # ``<bucket>.s3.<region>.amazonaws.com``.
+        _s3 = boto3.client(
+            "s3", region_name=_AWS_REGION, config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"})
+        )
     return _s3
 
 

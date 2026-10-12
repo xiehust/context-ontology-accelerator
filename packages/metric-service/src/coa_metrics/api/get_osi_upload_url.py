@@ -42,7 +42,7 @@ def _get_s3_client() -> Any:
         _s3_client = boto3.client(
             "s3",
             region_name=os.environ.get("AWS_REGION", "us-east-1"),
-            config=Config(signature_version="s3v4"),
+            config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
         )
     return _s3_client
 
