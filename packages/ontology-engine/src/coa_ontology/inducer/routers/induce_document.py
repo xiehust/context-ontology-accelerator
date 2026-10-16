@@ -23,7 +23,7 @@ _jobs: dict[str, JobResponse] = {}
 def _build_pipeline(config: dict) -> DocumentPipeline:
     return DocumentPipeline(
         llm=LLMClient(
-            model_id=config.get("llm_model_id", "us.anthropic.claude-sonnet-4-6"),
+            model_id=config.get("llm_model_id", "global.anthropic.claude-sonnet-5-5"),
             region=config.get("llm_region", "us-east-1"),
         ),
         embedding_generator=EmbeddingGeneratorClient(config["embedding_generator_url"]),

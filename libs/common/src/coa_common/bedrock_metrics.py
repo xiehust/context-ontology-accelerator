@@ -51,6 +51,16 @@ _PRICING: dict[str, dict[str, float]] = {
         "input": 2.00 / 1_000_000,
         "output": 10.00 / 1_000_000,
     },
+    # Current defaults (global cross-region inference profiles).
+    "global.anthropic.claude-sonnet-5-5": {
+        "input": 2.00 / 1_000_000,
+        "output": 10.00 / 1_000_000,
+    },
+    "global.anthropic.claude-haiku-5-5": {
+        # Prompts up to 100K tokens; $0.50/$2.50 per 1M beyond.
+        "input": 0.10 / 1_000_000,
+        "output": 0.50 / 1_000_000,
+    },
     # Embedding models bill on INPUT tokens only (no generated output).
     # ponytail: embed input-only pricing; confirm vs AWS pricing page
     "us.cohere.embed-v4:0": {
@@ -86,8 +96,8 @@ _PRICING: dict[str, dict[str, float]] = {
 # the same dict objects as _PRICING so the rates are never duplicated. Cohere embed is the
 # embed default because it is the primary embedding model in this stack.
 _PRICING_FAMILY: dict[str, dict[str, float]] = {
-    "sonnet": _PRICING["us.anthropic.claude-sonnet-5"],
-    "haiku": _PRICING["us.anthropic.claude-haiku-4-5-20251001-v1:0"],
+    "sonnet": _PRICING["global.anthropic.claude-sonnet-5-5"],
+    "haiku": _PRICING["global.anthropic.claude-haiku-5-5"],
     "embed": _PRICING["us.cohere.embed-v4:0"],
     # Nova families are per-variant (rates differ ~40x across the line, so a single
     # "nova" key would badly misprice). Premier is listed before Pro so the more

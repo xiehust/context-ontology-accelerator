@@ -18,6 +18,7 @@ from coa_common.bedrock import (
     GuardrailBlockedError,
     InputTooLargeError,
     extract_text_blocks,
+    low_effort_request_fields,
     resolve_chat_model_id,
 )
 
@@ -51,7 +52,7 @@ class TestDefaultModelIdResolution:
     def test_falls_back_to_the_shared_default(self, monkeypatch):
         monkeypatch.delenv("BEDROCK_CHAT_MODEL_ID", raising=False)
         assert resolve_chat_model_id() == FALLBACK_CHAT_MODEL_ID
-        assert FALLBACK_CHAT_MODEL_ID == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert FALLBACK_CHAT_MODEL_ID == "global.anthropic.claude-haiku-5-5"
 
     def test_empty_env_var_falls_back(self, monkeypatch):
         # An empty value is a misconfiguration, not a request for an empty model
@@ -113,11 +114,27 @@ class TestBedrockClient:
         assert result.output_tokens == 5
         assert result.latency_ms > 0
         mock_client.converse.assert_called_once_with(
-            modelId="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            modelId="global.anthropic.claude-haiku-5-5",
             messages=[{"role": "user", "content": [{"text": "user"}]}],
             system=[{"text": "system"}],
             inferenceConfig={"maxTokens": 4096},
+            additionalModelRequestFields={"output_config": {"effort": "low"}},
         )
+
+    @patch("coa_common.bedrock.boto3")
+    def test_invoke_omits_effort_for_models_that_reject_it(self, mock_boto3):
+        # Haiku 4.5 returns a ValidationException for output_config.effort.
+        mock_client = MagicMock()
+        mock_boto3.client.return_value = mock_client
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "{}"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+        }
+
+        BedrockClient(region="us-east-1", model_id="jp.anthropic.claude-haiku-4-5-20251001-v1:0").invoke("s", "u")
+
+        assert "additionalModelRequestFields" not in mock_client.converse.call_args.kwargs
 
     @patch("coa_common.bedrock.boto3")
     def test_invoke_parses_reasoning_model_response(self, mock_boto3):
@@ -618,3 +635,28 @@ class TestGuardrailDecisionMetrics:
             mock_logger.info.side_effect = RuntimeError("stdout closed")
             mock_logger.warning.side_effect = RuntimeError("stdout closed")
             client.invoke("sys", "usr")
+
+
+class TestLowEffortRequestFields:
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "global.anthropic.claude-haiku-5-5",
+            "us.anthropic.claude-haiku-5-5",
+            "anthropic.claude-haiku-5-5",
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-haiku-5-5",
+        ],
+    )
+    def test_haiku_5_gets_low_effort(self, model_id):
+        assert low_effort_request_fields(model_id) == {"output_config": {"effort": "low"}}
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "global.anthropic.claude-sonnet-5-5",
+            "amazon.nova-lite-v1:0",
+        ],
+    )
+    def test_other_models_get_nothing(self, model_id):
+        assert low_effort_request_fields(model_id) == {}

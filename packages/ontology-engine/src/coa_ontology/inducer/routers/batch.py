@@ -56,7 +56,7 @@ async def batch_extract(body: BatchRequest, request: Request):
                 min_size=body.min_size,
             )
             llm = LLMClient(
-                model_id=request.app.state.config.get("llm_model_id", "us.anthropic.claude-sonnet-4-6"),
+                model_id=request.app.state.config.get("llm_model_id", "global.anthropic.claude-sonnet-5-5"),
                 region=request.app.state.config.get("llm_region", "us-east-1"),
             )
             results = run_batch(config, llm)
@@ -88,7 +88,7 @@ async def run_alignment(body: AlignRequest, request: Request):
             job.status = JobStatus.MATCHING
             # TODO: inject real graph client from config
             LLMClient(
-                model_id=request.app.state.config.get("llm_model_id", "us.anthropic.claude-sonnet-4-6"),
+                model_id=request.app.state.config.get("llm_model_id", "global.anthropic.claude-sonnet-5-5"),
                 region=request.app.state.config.get("llm_region", "us-east-1"),
             )
             AlignmentConfig(min_repos=body.min_repos, workers=body.workers, max_pairs=body.max_pairs)

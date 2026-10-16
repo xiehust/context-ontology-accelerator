@@ -30,7 +30,7 @@ class LLMClient:
 
     def __init__(
         self,
-        model_id: str = "us.anthropic.claude-sonnet-4-6",
+        model_id: str = "global.anthropic.claude-sonnet-5-5",
         region: str = "us-east-1",
         cost_tracker: CostTracker | None = None,
     ):

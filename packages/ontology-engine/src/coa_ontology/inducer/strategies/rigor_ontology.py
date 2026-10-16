@@ -201,7 +201,7 @@ class RigorOntologyStrategy(InductionStrategy):
         if not ontology_uri_prefix.endswith(("#", "/")):
             ontology_uri_prefix += "#"
         llm_client = self._get_llm_client(config)
-        model_id = config.get("llm_model_id", "us.anthropic.claude-sonnet-4-6")
+        model_id = config.get("llm_model_id", "global.anthropic.claude-sonnet-5-5")
         provenance_base = ontology_uri_prefix.rstrip("#").rstrip("/") + "/provenance"
 
         # Order tables so referenced tables are generated first (FK deps)

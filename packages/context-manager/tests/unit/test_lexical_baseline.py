@@ -1398,7 +1398,7 @@ class TestRetiredModelPatch:
 
         from coa_serve.lexical.baseline_retriever import _ACTIVE_MODEL
 
-        expected = os.environ.get("GRAPHRAG_LLM_MODEL", "us.anthropic.claude-sonnet-5")
+        expected = os.environ.get("GRAPHRAG_LLM_MODEL", "global.anthropic.claude-sonnet-5-5")
         assert expected == _ACTIVE_MODEL
 
     def test_env_override_changes_patched_constants_on_reimport(self):

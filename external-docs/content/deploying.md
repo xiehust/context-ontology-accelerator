@@ -198,16 +198,16 @@ beyond what the stacks grant by default.
 Every model ID is configurable from the SSM deploy config (`/{prefix}/config`) — no source edits are
 required to deploy outside the US. Set the keys you need before deploying; each falls back to the
 built-in default when omitted. Inside the US a deployment that configures none of them behaves
-exactly as it does today; outside the US the defaults are unusable (see the warning below), and
+exactly as it does today; outside the US the `us.` embedding default is unusable (see the warning below), and
 `cdk synth` refuses to proceed until the keys are set.
 
 | Config key | Sets the model for | Default |
 |------------|--------------------|---------|
-| `bedrockLlmModelId` | Serve query LLM (NL-to-SPARQL, synthesis) | `us.anthropic.claude-sonnet-5` |
+| `bedrockLlmModelId` | Serve query LLM (NL-to-SPARQL, synthesis) | `global.anthropic.claude-sonnet-5-5` |
 | `bedrockEmbedModelId` | **All** embeddings — induction, doc-KG-build, metric matching, serve retrieval | `us.cohere.embed-v4:0` |
 | `bedrockEmbedDimensions` | Vector dimension for the embedding model above | `1024` |
-| `bedrockInductionLlmModelId` | Ontology induction, grounding rerank, description generation | `us.anthropic.claude-sonnet-5` |
-| `bedrockChatModelId` | Source enrichment, constraint inference, document-ingestion extraction | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `bedrockInductionLlmModelId` | Ontology induction, grounding rerank, description generation | `global.anthropic.claude-sonnet-5-5` |
+| `bedrockChatModelId` | Source enrichment, constraint inference, document-ingestion extraction | `global.anthropic.claude-haiku-5-5` |
 
 Both **geographic inference profiles** (`us.`, `eu.`, `apac.`, `jp.`, `global.`) and **bare in-region model
 IDs** (e.g. `cohere.embed-v4:0`) are accepted — bare IDs matter because some models publish geo
@@ -221,11 +221,11 @@ model because Cohere Embed v4 publishes no `jp.` profile):
 ```json
 {
   "initialAdminEmail": "admin@example.com",
-  "bedrockLlmModelId": "global.anthropic.claude-sonnet-5",
+  "bedrockLlmModelId": "global.anthropic.claude-sonnet-5-5",
   "bedrockEmbedModelId": "cohere.embed-v4:0",
   "bedrockEmbedDimensions": 1024,
-  "bedrockInductionLlmModelId": "global.anthropic.claude-sonnet-5",
-  "bedrockChatModelId": "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+  "bedrockInductionLlmModelId": "global.anthropic.claude-sonnet-5-5",
+  "bedrockChatModelId": "global.anthropic.claude-haiku-5-5"
 }
 ```
 
@@ -234,9 +234,10 @@ setting these: `aws bedrock list-inference-profiles` and `aws bedrock list-found
 
 !!! warning "`us.` profiles cannot be invoked outside the US"
     Bedrock rejects a cross-geography inference profile with
-    `ValidationException: The provided model identifier is invalid.` The defaults in the table above are
-    all `us.` profiles, so **a non-US deployment must set every model key** — a deploy that configures
-    none of them only "behaves as it does today" inside the US.
+    `ValidationException: The provided model identifier is invalid.` The LLM defaults in the table above are
+    `global.` profiles, invocable from every commercial region, but the embedding default is a `us.`
+    profile, so **a non-US deployment must set `bedrockEmbedModelId`** (and `us-gov-*` / `cn-*`, which
+    publish no `global.` profiles, must set every model key).
 
     Two checks catch this before the first invocation:
 

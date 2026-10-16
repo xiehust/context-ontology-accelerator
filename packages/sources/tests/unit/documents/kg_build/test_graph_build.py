@@ -252,6 +252,7 @@ def _llm_kwargs(llm) -> dict:
         "max_retries": llm.max_retries,
         "region_name": llm.region_name,
         "botocore_config": llm.botocore_config,
+        "additional_kwargs": llm.additional_kwargs,
     }
 
 
@@ -913,6 +914,32 @@ class TestGraphRAGConfig:
         # Region cannot be inherited from a session: the instance is pickled to
         # ProcessPool workers, which rebuild the client from these fields alone.
         assert assigned["region_name"] == mod.AWS_REGION
+
+    @pytest.mark.parametrize(
+        ("arn", "expected"),
+        [
+            (
+                "arn:aws:bedrock:us-east-1:1:inference-profile/global.anthropic.claude-haiku-5-5",
+                {"additionalModelRequestFields": {"output_config": {"effort": "low"}}},
+            ),
+            # Haiku 4.5 rejects output_config.effort: nothing extra is forwarded.
+            ("arn:aws:bedrock:us-east-1:1:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0", {}),
+        ],
+    )
+    @patch("graphrag_toolkit.lexical_graph.indexing.build.Checkpoint")
+    @patch("graphrag_toolkit.lexical_graph.storage.VectorStoreFactory")
+    @patch("graphrag_toolkit.lexical_graph.storage.GraphStoreFactory")
+    @patch("graphrag_toolkit.lexical_graph.LexicalGraphIndex")
+    @patch("graphrag_toolkit.lexical_graph.GraphRAGConfig")
+    def test_extraction_effort_low_only_on_haiku_5(
+        self, _cfg, mock_idx_cls, mock_gsf, mock_vsf, _ckpt, monkeypatch, mod, arn, expected
+    ):
+        monkeypatch.setattr(mod, "BEDROCK_MODEL_ARN", arn)
+        _setup_graphrag_mocks(mock_gsf, mock_vsf, mock_idx_cls)
+
+        mod._setup_graphrag("tenant-x")
+
+        assert _llm_kwargs(_cfg.extraction_llm)["additional_kwargs"] == expected
 
     @patch("graphrag_toolkit.lexical_graph.indexing.build.Checkpoint")
     @patch("graphrag_toolkit.lexical_graph.storage.VectorStoreFactory")

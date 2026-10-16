@@ -327,7 +327,7 @@ class BedrockLLMClient:
             guardrail_version: Guardrail version to apply. Defaults to
                 ``BEDROCK_GUARDRAIL_VERSION`` then ``"DRAFT"``.
         """
-        self._model_id = model_id or os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-5")
+        self._model_id = model_id or os.environ.get("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-5-5")
         self._embed_model_id = embed_model_id or os.environ.get("BEDROCK_EMBED_MODEL_ID", DEFAULT_EMBED_MODEL_ID)
         self._region = region or os.environ.get("BEDROCK_REGION", resolve_region())
         # Query embeddings go through the shared embedder so serve uses the SAME

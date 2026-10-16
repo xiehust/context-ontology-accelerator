@@ -433,6 +433,34 @@ class TestCostTrackerIntegration:
         stats = tracker.rerank_latency_stats
         assert stats is not None and stats["SampleCount"] == 1.0
 
+    @pytest.mark.parametrize(
+        ("llm_model_id", "expected_fields"),
+        [
+            ("global.anthropic.claude-haiku-5-5", {"output_config": {"effort": "low"}}),
+            # Haiku 4.5 rejects output_config.effort, so it must not be sent.
+            ("us.anthropic.claude-haiku-4-5-20251001-v1:0", None),
+        ],
+    )
+    def test_rerank_pins_low_effort_only_on_haiku_5(self, mock_catalog, mock_eg, llm_model_id, expected_fields):
+        service = GroundingService(
+            ontology_catalog=mock_catalog,
+            embedding_generator=mock_eg,
+            llm_model_id=llm_model_id,
+        )
+        fake = _fake_bedrock_converse({"inputTokens": 1, "outputTokens": 1})
+        fake.converse = MagicMock(side_effect=fake.converse)
+        with patch.object(type(service), "bedrock", property(lambda self: fake)):
+            service.ground_table(
+                table_name="agr_records",
+                table_description="insurance agreement records",
+                columns=[],
+                concept_vector=[0.5] * 10,
+                model_id="titan",
+                grounding_mode="ENHANCED",
+                ontology_ids=["fibo-agreements"],
+            )
+        assert fake.converse.call_args.kwargs.get("additionalModelRequestFields") == expected_fields
+
     def test_no_tracker_records_nothing_and_does_not_error(self, mock_catalog, mock_eg):
         service = GroundingService(
             ontology_catalog=mock_catalog,

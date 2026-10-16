@@ -79,6 +79,7 @@ import time
 import traceback
 
 import structlog
+from coa_common.bedrock import low_effort_request_fields
 from coa_common.config import resolve_region
 from coa_common.constants import (
     DEFAULT_CHUNK_OVERLAP,
@@ -387,6 +388,12 @@ except ImportError:  # pragma: no cover - unit tests stub this module out
     # importing graph_build possible everywhere else (and in tests that stub the
     # module); _picklable_bedrock_converse_cls() then raises with the reason.
     _picklable_bedrock_converse_class = None
+
+
+def _extraction_request_kwargs(model: str) -> dict:
+    """Extra converse() kwargs for the extraction LLM (effort=low on Haiku 5.x, else none)."""
+    fields = low_effort_request_fields(model)
+    return {"additionalModelRequestFields": fields} if fields else {}
 
 
 def _picklable_bedrock_converse_cls() -> type:
@@ -1035,6 +1042,10 @@ def _setup_graphrag(tenant_id: str):
             timeout=EXTRACTION_TIMEOUT_SECONDS,
             max_retries=EXTRACTION_MAX_ATTEMPTS,
             region_name=AWS_REGION,
+            # Forwarded verbatim into converse(); an __init__ field, so it survives
+            # the ProcessPool pickle hop above. Pins effort=low on Haiku 5.x (empty
+            # for any other model, which may reject the field).
+            additional_kwargs=_extraction_request_kwargs(BEDROCK_MODEL_ARN),
             botocore_config=Config(
                 max_pool_connections=extraction_pool_size,
                 connect_timeout=EXTRACTION_CONNECT_TIMEOUT_SECONDS,
