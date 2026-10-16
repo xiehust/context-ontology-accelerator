@@ -345,7 +345,7 @@ def _run_unstructured_induction(
             dimensions=app_config.get("bedrock_embed_dimensions", 1024),
         )
         description_llm = LLMClient(
-            model_id=app_config.get("description_llm_model_id", "us.anthropic.claude-sonnet-4-6"),
+            model_id=app_config.get("description_llm_model_id", "global.anthropic.claude-sonnet-5-5"),
             region=app_config.get("llm_region", "us-east-1"),
         )
         iri_resolver = InMemoryIRIResolver(
@@ -407,7 +407,7 @@ def _run_unstructured_induction(
                 llm_region=app_config.get("llm_region", "us-east-1"),
                 llm_model_id=app_config.get(
                     "grounding_llm_model_id",
-                    "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "global.anthropic.claude-haiku-5-5",
                 ),
                 namespace=ns,
             )

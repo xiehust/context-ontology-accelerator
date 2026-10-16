@@ -263,7 +263,7 @@ def run_induction_direct(
         "embedding_generator_url": "",
         "ontology_catalog_url": "",
         "neptune_analytics_url": os.environ.get("NEPTUNE_ANALYTICS_URL", "http://localhost:9200"),
-        "llm_model_id": os.environ.get("LLM_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
+        "llm_model_id": os.environ.get("LLM_MODEL_ID", "global.anthropic.claude-sonnet-5-5"),
         "llm_region": os.environ.get("LLM_REGION", os.environ["AWS_REGION"]),
         "bedrock_region": os.environ["BEDROCK_REGION"],
         "bedrock_embed_model_id": os.environ["BEDROCK_EMBED_MODEL_ID"],

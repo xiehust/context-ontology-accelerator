@@ -101,7 +101,7 @@ describe("OntologyStack model IDs from deploy config (#94)", () => {
     expect(envValue(t, "BEDROCK_EMBED_MODEL_ID")).toBe("us.cohere.embed-v4:0");
     expect(envValue(t, "BEDROCK_EMBED_DIMENSIONS")).toBe("1024");
     expect(envValue(t, "OSS_DIMENSIONS")).toBe("1024");
-    expect(envValue(t, "LLM_MODEL_ID")).toBe("us.anthropic.claude-sonnet-5");
+    expect(envValue(t, "LLM_MODEL_ID")).toBe("global.anthropic.claude-sonnet-5-5");
   });
 
   test("dashboard ModelId dimensions follow the configured models", () => {

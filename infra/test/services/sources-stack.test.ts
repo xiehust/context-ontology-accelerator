@@ -2494,14 +2494,14 @@ describe("SourcesStack", () => {
       expect(arn).toContain("::foundation-model/");
     });
 
-    it("defaults to the shared us. profile when no config is supplied", () => {
+    it("defaults to the shared global. profile when no config is supplied", () => {
       const t = renderWithModels({});
       const env = envOf(
         t,
         /sources-doc-trigger|documents-trigger|doc.*trigger/i,
       );
       expect(JSON.stringify(env.BEDROCK_MODEL_ARN)).toContain(
-        "inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "inference-profile/global.anthropic.claude-haiku-5-5",
       );
     });
   });

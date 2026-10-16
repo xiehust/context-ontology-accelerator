@@ -166,15 +166,15 @@ export const DEFAULT_BEDROCK_MODEL_ID = "us.cohere.embed-v4:0";
 
 /**
  * Default Bedrock chat/completion model ID — MUST match the Python single
- * source of truth (coa_common.bedrock.DEFAULT_MODEL_ID). Claude Haiku 4.5 via
- * an inference profile. Distinct from DEFAULT_BEDROCK_MODEL_ID, which is the
+ * source of truth (coa_common.bedrock.DEFAULT_MODEL_ID). Claude Haiku 5.5 via
+ * the global cross-region inference profile. Distinct from DEFAULT_BEDROCK_MODEL_ID, which is the
  * embedding model; every LLM text path (source enrichment, constraint
  * inference, translation) uses this one. Consumers that only observe the model
  * (e.g. AWS/Bedrock ModelId dashboard dimensions) go dark if this drifts from
  * the Python default, so the two must move together.
  */
 export const DEFAULT_BEDROCK_CHAT_MODEL_ID =
-  "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+  "global.anthropic.claude-haiku-5-5";
 
 /**
  * Default Bedrock model ID for ontology induction, grounding rerank, and
@@ -185,7 +185,7 @@ export const DEFAULT_BEDROCK_CHAT_MODEL_ID =
  * key (#94).
  */
 export const DEFAULT_BEDROCK_INDUCTION_MODEL_ID =
-  "us.anthropic.claude-sonnet-5";
+  "global.anthropic.claude-sonnet-5-5";
 
 /**
  * Default Bedrock model ID for the serve query LLM (Tier-2/Tier-3 reasoning,
@@ -197,4 +197,4 @@ export const DEFAULT_BEDROCK_INDUCTION_MODEL_ID =
  * exists so synth-time region validation can reason about the *effective*
  * model id for a deployment that has no config at all (#1020).
  */
-export const DEFAULT_BEDROCK_LLM_MODEL_ID = "us.anthropic.claude-sonnet-5";
+export const DEFAULT_BEDROCK_LLM_MODEL_ID = "global.anthropic.claude-sonnet-5-5";

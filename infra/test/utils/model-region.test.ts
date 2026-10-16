@@ -74,15 +74,32 @@ describe("regionGeographies", () => {
 });
 
 describe("modelIdRegionConflict", () => {
-  // The #1020 report: every default is a us. profile, deployed to Tokyo.
+  // The #1020 report: a us. default deployed to Tokyo. The embedding default
+  // is still a us. profile; the LLM defaults are global. profiles.
+  it("flags the built-in embedding default in ap-northeast-1", () => {
+    expect(
+      modelIdRegionConflict(DEFAULT_BEDROCK_MODEL_ID, "ap-northeast-1"),
+    ).toMatch(
+      /'us\.' inference profile, which Bedrock does not publish in ap-northeast-1/,
+    );
+  });
+
   it.each([
     DEFAULT_BEDROCK_LLM_MODEL_ID,
-    DEFAULT_BEDROCK_MODEL_ID,
     DEFAULT_BEDROCK_INDUCTION_MODEL_ID,
     DEFAULT_BEDROCK_CHAT_MODEL_ID,
-  ])("flags the built-in default %s in ap-northeast-1", (id) => {
-    expect(modelIdRegionConflict(id, "ap-northeast-1")).toMatch(
-      /'us\.' inference profile, which Bedrock does not publish in ap-northeast-1/,
+  ])("accepts the global. LLM default %s outside the US", (id) => {
+    expect(modelIdRegionConflict(id, "ap-northeast-1")).toBeUndefined();
+    expect(modelIdRegionConflict(id, "eu-west-1")).toBeUndefined();
+  });
+
+  it.each([
+    DEFAULT_BEDROCK_LLM_MODEL_ID,
+    DEFAULT_BEDROCK_INDUCTION_MODEL_ID,
+    DEFAULT_BEDROCK_CHAT_MODEL_ID,
+  ])("flags the global. LLM default %s in us-gov-west-1", (id) => {
+    expect(modelIdRegionConflict(id, "us-gov-west-1")).toMatch(
+      /'global\.' inference profile, which Bedrock does not publish in us-gov-west-1/,
     );
   });
 
@@ -235,7 +252,7 @@ describe("assertModelIdsInvocableFromRegion", () => {
     ).not.toThrow();
   });
 
-  it("fails synth for the default config in ap-northeast-1 and names every key", () => {
+  it("fails synth for the default config in ap-northeast-1 and names only the us. embed key", () => {
     let message = "";
     try {
       assertModelIdsInvocableFromRegion(
@@ -247,8 +264,11 @@ describe("assertModelIdsInvocableFromRegion", () => {
       message = (err as Error).message;
     }
     expect(message).toContain("deploy region ap-northeast-1");
-    for (const key of MODEL_ID_CONFIG_KEYS) {
-      expect(message).toContain(`- ${key}:`);
+    expect(message).toContain("- bedrockEmbedModelId:");
+    for (const key of MODEL_ID_CONFIG_KEYS.filter(
+      (k) => k !== "bedrockEmbedModelId",
+    )) {
+      expect(message).not.toContain(`- ${key}:`);
     }
     // Where the bad value came from, and the fix.
     expect(message).toContain(
@@ -281,9 +301,9 @@ describe("assertModelIdsInvocableFromRegion", () => {
     try {
       assertModelIdsInvocableFromRegion(
         resolveConfiguredModelIds({
-          bedrockLlmModelId: "global.anthropic.claude-sonnet-5",
-          bedrockEmbedModelId: "cohere.embed-v4:0",
-          // induction and chat left at their us. defaults
+          bedrockInductionLlmModelId: "us.anthropic.claude-sonnet-5",
+          bedrockChatModelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          // serve LLM left at its global. default, embed at its us. default
         }),
         "ap-northeast-1",
         PARAM,
@@ -293,8 +313,8 @@ describe("assertModelIdsInvocableFromRegion", () => {
     }
     expect(message).toContain("- bedrockInductionLlmModelId:");
     expect(message).toContain("- bedrockChatModelId:");
+    expect(message).toContain("- bedrockEmbedModelId:");
     expect(message).not.toContain("- bedrockLlmModelId:");
-    expect(message).not.toContain("- bedrockEmbedModelId:");
   });
 
   it("attributes a wrong value that came from the config to the config", () => {

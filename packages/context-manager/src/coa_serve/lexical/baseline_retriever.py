@@ -39,7 +39,7 @@ from .strategies import DEFAULT_SPEC, StrategySpec
 # Patching the module-level constants is the only reliable workaround.
 # TODO: Remove once graphrag-toolkit publishes a fix with active model defaults.
 # ---------------------------------------------------------------------------
-_ACTIVE_MODEL = os.environ.get("GRAPHRAG_LLM_MODEL", "us.anthropic.claude-sonnet-5")
+_ACTIVE_MODEL = os.environ.get("GRAPHRAG_LLM_MODEL", "global.anthropic.claude-sonnet-5-5")
 _graphrag_cfg.DEFAULT_RESPONSE_MODEL = _ACTIVE_MODEL
 _graphrag_cfg.DEFAULT_EXTRACTION_MODEL = _ACTIVE_MODEL
 

@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 # Chat/completion model used when a caller constructs BedrockClient without an
 # explicit model_id (table enrichment, constraint inference). Resolved from the
 # BEDROCK_CHAT_MODEL_ID environment variable so a deployment can point these
-# paths at a region-appropriate model (#94) — the `us.` inference profile
-# fallback is only invocable from US regions. Deliberately NOT BEDROCK_MODEL_ID:
+# paths at a region-appropriate model (#94) — the `global.` inference profile
+# fallback is not published in the isolated partitions (us-gov, cn). Deliberately NOT BEDROCK_MODEL_ID:
 # that name is already taken by the serve query LLM (context-manager) and the
 # metric-service embed fallback chain, and reusing it here would cross-wire
 # those models into this client. Must stay in step with the TypeScript
 # DEFAULT_BEDROCK_CHAT_MODEL_ID (libs/ts-shared/src/constants.ts).
-FALLBACK_CHAT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+FALLBACK_CHAT_MODEL_ID = "global.anthropic.claude-haiku-5-5"
 
 
 def resolve_chat_model_id(default: str = FALLBACK_CHAT_MODEL_ID) -> str:
@@ -48,6 +48,26 @@ def resolve_chat_model_id(default: str = FALLBACK_CHAT_MODEL_ID) -> str:
 
 
 DEFAULT_MODEL_ID = resolve_chat_model_id()
+
+# Haiku generations that accept ``output_config.effort``. Haiku 5.x runs adaptive
+# thinking by default (effort ``medium``); the chat paths are short structured
+# extraction/rerank calls that do not repay it. Haiku 4.5 rejects the field with a
+# ValidationException ("This model does not support the effort parameter"), so a
+# deployment that configures it back must not receive it.
+_LOW_EFFORT_MODEL_MARKERS = ("claude-haiku-5",)
+
+
+def low_effort_request_fields(model_id: str) -> dict:
+    """Converse ``additionalModelRequestFields`` pinning effort=low on Haiku 5.x.
+
+    Returns an empty dict for every other model (including ARNs and bare ids that
+    do not name a Haiku 5.x model), so callers can pass it unconditionally.
+    """
+    if any(marker in model_id.lower() for marker in _LOW_EFFORT_MODEL_MARKERS):
+        return {"output_config": {"effort": "low"}}
+    return {}
+
+
 _DEFAULT_READ_TIMEOUT = 90
 _DEFAULT_GUARDRAIL_VERSION = "DRAFT"
 
@@ -211,6 +231,8 @@ class BedrockClient:
             "system": [{"text": system_prompt}],
             "inferenceConfig": {"maxTokens": max_tokens},
         }
+        if extra_fields := low_effort_request_fields(self._model_id):
+            kwargs["additionalModelRequestFields"] = extra_fields
         if self._guardrail_id:
             kwargs["guardrailConfig"] = {
                 "guardrailIdentifier": self._guardrail_id,

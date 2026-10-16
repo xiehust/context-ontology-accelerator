@@ -2010,15 +2010,15 @@ wheels = [
 
 [[package]]
 name = "llama-index-llms-bedrock-converse"
-version = "0.14.16"
+version = "0.15.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
     { name = "llama-index-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/8c/897d2ecc4b8569c38a4f28fb3dbd25b8a546d82fc8d68c23860801435f11/llama_index_llms_bedrock_converse-0.14.16.tar.gz", hash = "sha256:8756325741c3e3c59e7144631cde51a82696808bc8b187b9637901fd462551da", size = 20305, upload-time = "2026-07-01T23:30:31.508Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/f6/ea756991d4abfbe32e66f5580e07b74acf43ad4d3bcbb2073ab270cead79/llama_index_llms_bedrock_converse-0.15.5.tar.gz", hash = "sha256:1b36bef24fe563ce21a4a5071d4e1c61c6082e388480254195d03fd83f40458b", size = 20450, upload-time = "2026-10-14T14:54:17.371Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/73/06cf62c9eee302605c5f5864c66d40d496540282642514a2f28b875ce9b7/llama_index_llms_bedrock_converse-0.14.16-py3-none-any.whl", hash = "sha256:0ddf93353ed4b53186f925b88428e0e36203055b01cd3228ec0409d4ac8fc9e8", size = 20760, upload-time = "2026-07-01T23:30:30.507Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/8a/3a3a44ff34ff7ed84f9123adeb218d80447cca94a161d9a7e95ad28608e7/llama_index_llms_bedrock_converse-0.15.5-py3-none-any.whl", hash = "sha256:df532791a35aa7cc52034eafeebe883087698ea3c236f7709f804de5f8a7cb47", size = 20910, upload-time = "2026-10-14T14:54:16.309Z" },
 ]
 
 [[package]]

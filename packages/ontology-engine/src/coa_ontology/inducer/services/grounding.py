@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from coa_common import async_boto_config
-from coa_common.bedrock import extract_text_blocks
+from coa_common.bedrock import extract_text_blocks, low_effort_request_fields
 from coa_common.bedrock_metrics import CostTracker
 
 from coa_ontology.inducer.schemas import ConceptMatch, MatchCandidate
@@ -280,7 +280,7 @@ class GroundingService:
         ontology_catalog,
         embedding_generator,
         llm_region: str = "us-east-1",
-        llm_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        llm_model_id: str = "global.anthropic.claude-haiku-5-5",
         namespace: str | None = None,
         cost_tracker: CostTracker | None = None,
     ):
@@ -909,11 +909,15 @@ class GroundingService:
             # botocore's bounded retries (async_boto_config, max_attempts=3) cover
             # transient throttling / 5xx; an error surfacing past them is real and
             # is raised below, not swallowed to a novel.
+            converse_kwargs: dict = {}
+            if extra_fields := low_effort_request_fields(self._llm_model_id):
+                converse_kwargs["additionalModelRequestFields"] = extra_fields
             resp = bedrock.converse(
                 modelId=self._llm_model_id,
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
                 system=[{"text": rerank_system}],
                 inferenceConfig={"maxTokens": max_tokens},
+                **converse_kwargs,
             )
             # Record token usage on the success path, right after converse returns
             # — usage is present even if the JSON body later fails to parse.

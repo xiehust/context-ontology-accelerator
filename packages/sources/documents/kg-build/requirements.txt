@@ -20,3 +20,10 @@ graphrag-lexical-graph==3.18.7
 opensearch-py==3.2.0
 llama-index-vector-stores-opensearch==1.2.0
 llama-index-core==0.14.23
+# Transitive via graphrag-lexical-graph (>=0.14.16), pinned so the extraction
+# LLM resolves the default chat model: 0.14.x has no claude-haiku-5-5 /
+# claude-sonnet-5-5 entries and raises "Model does not support inference
+# profiles" on their ARNs. 0.15.5 also lists them in BEDROCK_NO_TEMP_MODELS,
+# so the temperature=0.0 graph_build.py passes is stripped before Bedrock
+# (which rejects non-default sampling on these models).
+llama-index-llms-bedrock-converse==0.15.5

@@ -68,7 +68,12 @@ class TestCostFor:
         assert cost_for("us.anthropic.claude-sonnet-4-7", 1_000_000, 1_000_000) == pytest.approx(12.00)
 
     def test_unknown_haiku_version_falls_back_to_haiku_rate(self) -> None:
-        assert cost_for("us.anthropic.claude-haiku-9-9-vNext", 1_000_000, 1_000_000) == pytest.approx(6.00)
+        # Family fallback tracks the current default (Haiku 5.5: $0.10/$0.50 per 1M).
+        assert cost_for("us.anthropic.claude-haiku-9-9-vNext", 1_000_000, 1_000_000) == pytest.approx(0.60)
+
+    def test_current_default_models_priced_exactly(self) -> None:
+        assert cost_for("global.anthropic.claude-sonnet-5-5", 1_000_000, 1_000_000) == pytest.approx(12.00)
+        assert cost_for("global.anthropic.claude-haiku-5-5", 1_000_000, 1_000_000) == pytest.approx(0.60)
 
     def test_unknown_embed_model_falls_back_to_cohere_embed_rate(self) -> None:
         # Cohere embed is the embed default; input-only pricing at $0.10/1M.
