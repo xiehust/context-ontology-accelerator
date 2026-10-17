@@ -25,6 +25,7 @@ import re
 
 import boto3
 from coa_common import async_boto_config
+from coa_common.bedrock import extract_text_blocks
 from coa_common.bedrock_metrics import CostTracker
 from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, URIRef
 from rdflib.collection import Collection
@@ -662,7 +663,20 @@ class RigorOntologyStrategy(InductionStrategy):
             # generation, not rerank). No-op when no tracker was threaded in.
             if self._cost_tracker is not None:
                 self._cost_tracker.record_from_converse("generate", model_id, resp)
-            result = resp["output"]["message"]["content"][0]["text"]
+            # A truncated fragment cannot be repaired by the parse fallbacks
+            # downstream — they would just drop the table as parse_failed and hide
+            # the cause. Thinking shares this budget, so name the knob.
+            stop_reason = resp.get("stopReason")
+            if stop_reason in ("max_tokens", "model_context_window_exceeded"):
+                log.error(
+                    "RIGOR: LLM response truncated (stopReason=%s, maxTokens=%d)",
+                    stop_reason,
+                    _MAX_OUTPUT_TOKENS,
+                )
+                return None
+            # Select the answer by block type, not position: adaptive-thinking
+            # models (Sonnet 5.x) return a reasoningContent block before it.
+            result = extract_text_blocks(resp["output"]["message"]["content"])
             log.info(
                 "RIGOR LLM: model=%s prompt_chars=%d response_chars=%d %.0fms",
                 model_id,

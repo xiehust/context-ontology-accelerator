@@ -29,6 +29,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from coa_common import async_boto_config
 from coa_common.bedrock import extract_text_blocks, low_effort_request_fields
 from coa_common.bedrock_metrics import CostTracker
+from rdflib import URIRef
+from rdflib.namespace import SKOS
 
 from coa_ontology.inducer.schemas import ConceptMatch, MatchCandidate
 
@@ -92,7 +94,7 @@ _RERANK_SYSTEM = (
     "classes (each with its formal definition), decide which candidate "
     "the table should be grounded to.\n\n"
     "Output EXACTLY one JSON object with these fields:\n"
-    '  {"choice": "<localName or NONE>", '
+    '  {"choice": <candidate number, or "NONE">, '
     '"relationship": "<exactMatch|closeMatch|broadMatch|'
     'narrowMatch|relatedMatch|none>", '
     '"confidence": <0.0-1.0>, "reason": "<one sentence>"}\n\n'
@@ -100,6 +102,8 @@ _RERANK_SYSTEM = (
     "- If a candidate's name matches or closely describes the table's "
     "purpose, PICK IT. Prefer the candidate with a definition that aligns "
     "with the table's columns and description.\n"
+    "- Candidates are numbered [1], [2], ... Answer with the NUMBER of your "
+    "pick, never its name: several candidates can share a name.\n"
     "- When multiple candidates share the same name (e.g. from different "
     "ontologies), pick the one whose definition best matches the table's "
     "domain. If one has a definition and the other doesn't, prefer the "
@@ -127,7 +131,7 @@ _RERANK_SYSTEM_CLASS = (
     "classes (each with its formal definition), decide which candidate "
     "the source class should be grounded to.\n\n"
     "Output EXACTLY one JSON object with these fields:\n"
-    '  {"choice": "<localName or NONE>", '
+    '  {"choice": <candidate number, or "NONE">, '
     '"relationship": "<exactMatch|closeMatch|broadMatch|'
     'narrowMatch|relatedMatch|none>", '
     '"confidence": <0.0-1.0>, "reason": "<one sentence>"}\n\n'
@@ -135,6 +139,8 @@ _RERANK_SYSTEM_CLASS = (
     "- If a candidate's name matches or closely describes the source class's "
     "meaning, PICK IT. Prefer the candidate whose definition aligns with the "
     "source class's definition.\n"
+    "- Candidates are numbered [1], [2], ... Answer with the NUMBER of your "
+    "pick, never its name: several candidates can share a name.\n"
     "- When multiple candidates share the same name (e.g. from different "
     "ontologies), pick the one whose definition best matches the source "
     "class's domain. If one has a definition and the other doesn't, prefer "
@@ -149,6 +155,22 @@ _RERANK_SYSTEM_CLASS = (
     "- relatedMatch: conceptually associated but distinct\n"
     "- Output valid JSON only. No markdown, no explanation outside the JSON."
 )
+
+
+# The SKOS predicate to emit for each reranker-chosen relationship, and whether
+# that relationship implies a forward rdfs:subClassOf (subsumption: the induced
+# class IS-A / is narrower-or-equal-to the foundational concept). narrowMatch
+# means the foundational concept is NARROWER than our class, so a forward
+# subClassOf would be BACKWARDS — we assert only the skos link. relatedMatch is
+# associative, not subsumption.
+RELATIONSHIP_TO_SKOS: dict[str, URIRef] = {
+    "exactMatch": SKOS.exactMatch,
+    "closeMatch": SKOS.closeMatch,
+    "broadMatch": SKOS.broadMatch,
+    "narrowMatch": SKOS.narrowMatch,
+    "relatedMatch": SKOS.relatedMatch,
+}
+SUBCLASSOF_RELATIONSHIPS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
 
 
 @dataclass
@@ -208,6 +230,36 @@ def _local_name(uri: str) -> str:
     if "#" in uri:
         return uri.rsplit("#", 1)[1]
     return uri.rsplit("/", 1)[-1]
+
+
+def _resolve_rerank_choice(choice: object, shown: list[GroundingCandidate]) -> GroundingCandidate | None:
+    """Map the reranker's ``choice`` to the candidate it names, or None.
+
+    The prompt numbers candidates from 1 and asks for the number, because a name
+    cannot tell apart candidates that share one (``Policy`` from two
+    ontologies): matching by name always took the first, discarding the pick
+    the LLM made on the definitions. A bare name is still accepted for a model
+    that answers with one anyway, matched on local name and then label. Out of
+    range numbers and unknown names resolve to None (the caller grounds novel).
+    """
+    if isinstance(choice, bool):  # bool is an int subclass; never a valid pick
+        return None
+    if isinstance(choice, int | float) and float(choice).is_integer():
+        n = int(choice)
+        return shown[n - 1] if 1 <= n <= len(shown) else None
+    text = str(choice or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    if text.isdigit():
+        n = int(text)
+        return shown[n - 1] if 1 <= n <= len(shown) else None
+    wanted = _normalize(text)
+    if not wanted:
+        return None
+    for c in shown:
+        if _normalize(_local_name(c.entity_uri)) == wanted:
+            return c
+    return next((c for c in shown if _normalize(c.label) == wanted), None)
 
 
 def _recall_spread(candidates: list[GroundingCandidate]) -> float | None:
@@ -538,7 +590,7 @@ class GroundingService:
             subject_kind=_subject_kind,
         )
 
-        if rerank_result.get("choice") == "NONE":
+        if str(rerank_result.get("choice", "")).strip().upper() == "NONE":
             # LLM genuinely abstained — novel. (A failed/unparseable rerank
             # raises GroundingRerankError in _llm_rerank; it never returns here.)
             return GroundingResult(
@@ -555,9 +607,13 @@ class GroundingService:
 
         # LLM picked a candidate
         choice_name = rerank_result["choice"]
-        chosen = next(
-            (c for c in raw_candidates if _normalize(_local_name(c.entity_uri)) == _normalize(choice_name)),
-            None,
+        # _llm_rerank resolves the pick against the numbered window the LLM saw.
+        # A result without that key (a caller supplying its own rerank dict) is
+        # resolved the same way against the full recall.
+        chosen = (
+            rerank_result["candidate"]
+            if "candidate" in rerank_result
+            else _resolve_rerank_choice(choice_name, raw_candidates)
         )
         if not chosen:
             # LLM named something not in the candidate list — treat as novel
@@ -880,10 +936,12 @@ class GroundingService:
         window = list(candidates[:candidate_window])
         window.extend(c for c in candidates[candidate_window:] if c.from_lexical)
         cand_lines = []
-        for c in window:
+        for n, c in enumerate(window, start=1):
             defn = c.definition or "(no definition available)"
-            source = _local_name(c.ontology_id) if c.ontology_id else "unknown"
-            cand_lines.append(f"  - {c.label} [from {source}]: {defn[:200]}")
+            # Ontology ids usually end in "/" or "#"; strip it or the source name
+            # (the cue that tells same-named candidates apart) renders empty.
+            source = (_local_name(c.ontology_id.rstrip("/#")) if c.ontology_id else "") or "unknown"
+            cand_lines.append(f"  [{n}] {c.label} [from {source}]: {defn[:200]}")
 
         header = f"SOURCE {'CLASS' if is_class else 'TABLE'}: {table_name}\n"
         columns_block = "" if is_class else ("Columns:\n" + "\n".join(col_lines) + "\n")
@@ -954,6 +1012,7 @@ class GroundingService:
                 result.get("confidence", 0),
                 result.get("reason", ""),
             )
+            result["candidate"] = _resolve_rerank_choice(result.get("choice"), window)
             return result
         except json.JSONDecodeError as e:
             # The call succeeded but the model did not return parseable JSON

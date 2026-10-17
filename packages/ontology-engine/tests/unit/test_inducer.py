@@ -265,6 +265,50 @@ def test_production_strategy_exact_match_grounds_via_skos_exactmatch_not_grounde
     assert list(g.triples((None, OWL.imports, None))) == []
 
 
+@pytest.mark.parametrize(
+    ("relationship", "skos_pred", "subclass"),
+    [
+        ("exactMatch", SKOS.exactMatch, True),
+        ("closeMatch", SKOS.closeMatch, True),
+        # The foundational class is BROADER: subClassOf points the right way.
+        ("broadMatch", SKOS.broadMatch, True),
+        # The foundational class is NARROWER: a forward subClassOf would be backwards.
+        ("narrowMatch", SKOS.narrowMatch, False),
+        # Associative, not hierarchical.
+        ("relatedMatch", SKOS.relatedMatch, False),
+    ],
+)
+def test_production_strategy_grounding_follows_reranker_relationship(relationship, skos_pred, subclass):
+    """A grounded table emits the SKOS link the reranker chose, and rdfs:subClassOf
+    only for a subsumption-implying relationship — the tier alone no longer implies it."""
+    from coa_ontology.inducer.strategies.table_to_ontology import TableToOntologyStrategy
+
+    table = _make_table()
+    matches = [
+        ConceptMatch(
+            source_table=table.name,
+            source_column="",
+            matched_class_uri="http://schema.org/Order",
+            matched_ontology_id="https://schema.org/",
+            similarity=0.9,
+            match_type="exact",
+            relationship=relationship,
+            scoring_strategy="grounding_enhanced",
+        ),
+    ]
+
+    g, novel = TableToOntologyStrategy()._build_proposal_ontology("http://ex.org/induced#", [table], matches)
+
+    orders_cls = URIRef("http://ex.org/induced#Orders")
+    order_fc = URIRef("http://schema.org/Order")
+    assert (orders_cls, skos_pred, order_fc) in g
+    assert ((orders_cls, RDFS.subClassOf, order_fc) in g) is subclass
+    other_links = {SKOS.exactMatch, SKOS.closeMatch, SKOS.broadMatch, SKOS.narrowMatch, SKOS.relatedMatch} - {skos_pred}
+    assert not any((orders_cls, pred, order_fc) in g for pred in other_links)
+    # Acceptance is unchanged: the table is still grounded, not novel.
+    assert table.name not in novel
+
+
 def test_production_strategy_does_not_emit_prov_lineage():
     """Induction must NOT emit prov:wasDerivedFrom source lineage (removed).
     Neither classes nor properties carry any prov:wasDerivedFrom triple."""

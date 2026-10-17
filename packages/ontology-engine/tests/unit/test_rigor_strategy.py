@@ -2175,3 +2175,34 @@ class TestDroppedTables:
         )
 
         assert dropped == []
+
+
+class TestCallLlmResponseShape:
+    """_call_llm reads the answer by block type and refuses truncated output."""
+
+    @staticmethod
+    def _client(content: list[dict], stop_reason: str = "end_turn") -> MagicMock:
+        client = MagicMock()
+        client.converse.return_value = {
+            "output": {"message": {"content": content}},
+            "stopReason": stop_reason,
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+        }
+        return client
+
+    def test_skips_leading_reasoning_block(self):
+        # Adaptive-thinking models (Sonnet 5.x) put reasoningContent first; reading
+        # content[0]["text"] raised KeyError and every table was dropped.
+        client = self._client(
+            [
+                {"reasoningContent": {"reasoningText": {"text": "", "signature": "sig"}}},
+                {"text": "ind:Patient a owl:Class ."},
+            ]
+        )
+        out = RigorOntologyStrategy()._call_llm(client, "m", "prompt", "system")
+        assert out == "ind:Patient a owl:Class ."
+
+    @pytest.mark.parametrize("stop_reason", ["max_tokens", "model_context_window_exceeded"])
+    def test_truncated_response_returns_none(self, stop_reason):
+        client = self._client([{"text": "ind:Patient a owl:Cla"}], stop_reason=stop_reason)
+        assert RigorOntologyStrategy()._call_llm(client, "m", "prompt", "system") is None
