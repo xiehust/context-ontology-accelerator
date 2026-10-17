@@ -480,3 +480,81 @@ class TestCostTrackerIntegration:
             )
         # LLM abstained (choice NONE) → novel, and no crash without a tracker.
         assert result.match_type == "novel"
+
+
+class TestRerankChoiceByNumber:
+    """The reranker answers with a candidate NUMBER, so homonyms stay distinguishable."""
+
+    @staticmethod
+    def _homonyms():
+        from coa_ontology.inducer.services.grounding import GroundingCandidate
+
+        return [
+            GroundingCandidate(
+                entity_uri="http://purl.org/dc/terms/Policy",
+                ontology_id="http://purl.org/dc/terms/",
+                label="Policy",
+                definition="A plan or course of action by an authority.",
+                lexical_sim=0.91,
+            ),
+            GroundingCandidate(
+                entity_uri="https://ex.org/insurance#Policy",
+                ontology_id="https://ex.org/insurance#",
+                label="Policy",
+                definition="An insurance contract between an insurer and a policyholder.",
+                lexical_sim=0.90,
+            ),
+        ]
+
+    @pytest.mark.parametrize("choice", [2, 2.0, "2", "[2]", " 2 "])
+    def test_number_picks_that_candidate(self, choice):
+        from coa_ontology.inducer.services.grounding import _resolve_rerank_choice
+
+        shown = self._homonyms()
+        assert _resolve_rerank_choice(choice, shown) is shown[1]
+
+    @pytest.mark.parametrize("choice", [0, 3, -1, "7", True, None, "", "Unknown"])
+    def test_out_of_range_or_unknown_resolves_to_none(self, choice):
+        from coa_ontology.inducer.services.grounding import _resolve_rerank_choice
+
+        assert _resolve_rerank_choice(choice, self._homonyms()) is None
+
+    def test_bare_name_still_accepted(self):
+        from coa_ontology.inducer.services.grounding import _resolve_rerank_choice
+
+        shown = self._homonyms()
+        assert _resolve_rerank_choice("policy", shown) is shown[0]
+
+    def test_rerank_numbers_prompt_and_resolves_homonym(self, mock_catalog, mock_eg):
+        # Same-named candidates from two ontologies: the LLM's pick of the second
+        # one (on its definition) must survive — matching by name took the first.
+        service = GroundingService(ontology_catalog=mock_catalog, embedding_generator=mock_eg)
+        body = '{"choice": 2, "relationship": "exactMatch", "confidence": 0.9, "reason": "insurance"}'
+        fake = MagicMock()
+        fake.converse.return_value = {
+            "output": {"message": {"content": [{"text": body}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+        }
+        shown = self._homonyms()
+        with patch.object(type(service), "bedrock", property(lambda self: fake)):
+            result = service._llm_rerank("insurance_policies", "Issued insurance policies", [], shown)
+
+        prompt = fake.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        assert "[1] Policy [from terms]" in prompt
+        assert "[2] Policy" in prompt
+        assert result["candidate"] is shown[1]
+
+    def test_rerank_prompt_names_source_ontology_of_trailing_slash_ids(self, mock_catalog, mock_eg):
+        service = GroundingService(ontology_catalog=mock_catalog, embedding_generator=mock_eg)
+        fake = MagicMock()
+        fake.converse.return_value = {
+            "output": {"message": {"content": [{"text": '{"choice": "NONE", "relationship": "none"}'}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+        }
+        with patch.object(type(service), "bedrock", property(lambda self: fake)):
+            service._llm_rerank("t", "", [], self._homonyms())
+        prompt = fake.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        assert "[from terms]" in prompt
+        assert "[from insurance]" in prompt

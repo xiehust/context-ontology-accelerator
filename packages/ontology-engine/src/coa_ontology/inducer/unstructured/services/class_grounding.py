@@ -51,7 +51,12 @@ from rdflib import OWL, RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
 from rdflib.namespace import SKOS
 
 from coa_ontology.inducer.schemas import ConceptMatch
-from coa_ontology.inducer.services.grounding import GroundingRerankError, GroundingService
+from coa_ontology.inducer.services.grounding import (
+    RELATIONSHIP_TO_SKOS,
+    SUBCLASSOF_RELATIONSHIPS,
+    GroundingRerankError,
+    GroundingService,
+)
 
 log = logging.getLogger(__name__)
 
@@ -254,21 +259,6 @@ _GROUNDING_PREDICATES = (
     SKOS.relatedMatch,
 )
 
-# The SKOS predicate to emit for each reranker-chosen relationship, and whether
-# that relationship implies a forward rdfs:subClassOf (subsumption: the induced
-# class IS-A / is narrower-or-equal-to the foundational concept). narrowMatch
-# means the foundational concept is NARROWER than our class, so a forward
-# subClassOf would be BACKWARDS — we assert only the skos link. relatedMatch is
-# associative, not subsumption.
-_RELATIONSHIP_TO_SKOS: dict[str, URIRef] = {
-    "exactMatch": SKOS.exactMatch,
-    "closeMatch": SKOS.closeMatch,
-    "broadMatch": SKOS.broadMatch,
-    "narrowMatch": SKOS.narrowMatch,
-    "relatedMatch": SKOS.relatedMatch,
-}
-_SUBCLASSOF_RELATIONSHIPS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
-
 
 def _is_foundational_target(target_uri: str, uri_prefix: str) -> bool:
     """Return True when ``target_uri`` is a foundational grounding target, not an induced class.
@@ -301,7 +291,7 @@ def _emit_grounding_axioms(
     ``relationship`` (exactMatch / closeMatch / broadMatch / narrowMatch /
     relatedMatch) selects the SKOS predicate; a forward ``rdfs:subClassOf`` is
     asserted only for subsumption-implying relationships
-    (:data:`_SUBCLASSOF_RELATIONSHIPS`) — never for narrowMatch (the foundational
+    (:data:`SUBCLASSOF_RELATIONSHIPS`) — never for narrowMatch (the foundational
     concept is narrower than ours, so subClassOf would point the wrong way) or
     relatedMatch (associative, not hierarchical).
 
@@ -323,7 +313,7 @@ def _emit_grounding_axioms(
 
     # Resolve the SKOS predicate from the reranker relationship, falling back to
     # the legacy match_type mapping when no relationship is available.
-    skos_pred = _RELATIONSHIP_TO_SKOS.get(relationship or "")
+    skos_pred = RELATIONSHIP_TO_SKOS.get(relationship or "")
     if skos_pred is None:
         if match_type == "exact":
             relationship, skos_pred = "exactMatch", SKOS.exactMatch
@@ -333,7 +323,7 @@ def _emit_grounding_axioms(
             relationship, skos_pred = "relatedMatch", SKOS.relatedMatch
 
     g.add((class_uri, skos_pred, target))
-    if relationship in _SUBCLASSOF_RELATIONSHIPS:
+    if relationship in SUBCLASSOF_RELATIONSHIPS:
         g.add((class_uri, RDFS.subClassOf, target))
     if match_confidence_prop is not None and confidence is not None:
         g.add((class_uri, match_confidence_prop, Literal(confidence, datatype=XSD.float)))

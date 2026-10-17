@@ -23,7 +23,11 @@ from rdflib.namespace import SKOS
 
 from coa_ontology.inducer.schemas import ConceptMatch
 from coa_ontology.inducer.services.data_catalog import CatalogTable, parse_referred_column
-from coa_ontology.inducer.services.grounding import GroundingRerankError
+from coa_ontology.inducer.services.grounding import (
+    RELATIONSHIP_TO_SKOS,
+    SUBCLASSOF_RELATIONSHIPS,
+    GroundingRerankError,
+)
 from coa_ontology.inducer.services.subtype_detection import detect_pk_sharing_subtypes
 from coa_ontology.inducer.strategies.base import (
     AUTHORITATIVE_FK_SOURCES,
@@ -422,11 +426,18 @@ class TableToOntologyStrategy(InductionStrategy):
                 # reports as a cycle and a self skos:exactMatch/closeMatch is
                 # semantically vacuous — emit none of the grounding axioms.
                 if grounding_cls != table_cls:
-                    g.add((table_cls, RDFS.subClassOf, grounding_cls))
-                    if tm.match_type == "exact":
-                        g.add((table_cls, SKOS.exactMatch, grounding_cls))
-                    else:
-                        g.add((table_cls, SKOS.closeMatch, grounding_cls))
+                    # The reranker's relationship picks the SKOS link, and only a
+                    # subsumption-implying one (exact/close/broad) earns the forward
+                    # rdfs:subClassOf: for narrowMatch the foundational class is the
+                    # NARROWER one, so subClassOf would point backwards, and
+                    # relatedMatch is associative. Without a usable relationship
+                    # (STANDARD mode, older records) fall back to the tier.
+                    relationship = tm.relationship
+                    if relationship not in RELATIONSHIP_TO_SKOS:
+                        relationship = "exactMatch" if tm.match_type == "exact" else "closeMatch"
+                    g.add((table_cls, RELATIONSHIP_TO_SKOS[relationship], grounding_cls))
+                    if relationship in SUBCLASSOF_RELATIONSHIPS:
+                        g.add((table_cls, RDFS.subClassOf, grounding_cls))
                     if tm.similarity is not None:
                         g.add((table_cls, match_confidence, Literal(tm.similarity, datatype=XSD.float)))
             elif tm and tm.match_type == "ambiguous" and tm.matched_class_uri:
