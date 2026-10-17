@@ -16,6 +16,7 @@ import {
   Flashbar,
   Header,
   SegmentedControl,
+  Select,
   SpaceBetween,
   StatusIndicator,
 } from "@cloudscape-design/components";
@@ -32,7 +33,11 @@ import {
 import { RationalePanel } from "@components/Chat/RationalePanel";
 import { usePlaygroundChatSSE } from "@api-hooks/use-playground-chat-sse";
 import { useExampleQuestions } from "@api-hooks/use-example-questions";
-import type { ChatMessage as ChatMessageType, ExecutionMode } from "@app-types";
+import type {
+  ChatMessage as ChatMessageType,
+  ExecutionMode,
+  QueryStrategy,
+} from "@app-types";
 import { HomeHelpPanel } from "./HomeHelpPanel";
 import { ONBOARDING_ICON } from "@constants/drawer-icons";
 import { scrollToBottom } from "@utils/scroll";
@@ -50,6 +55,19 @@ const EXECUTION_MODE_OPTIONS: readonly { id: ExecutionMode; text: string }[] = [
   { id: "deep-reasoning", text: "Deep Reasoning" },
 ];
 
+/**
+ * The Tier-2 strategy dropdown's options, sent as `options.strategy`. Typed by
+ * `QueryStrategy` so a value the serve side does not accept is a compile error.
+ * The first entry matches serve's default (`nl_to_sql_first`).
+ */
+const STRATEGY_OPTIONS: readonly { value: QueryStrategy; label: string }[] = [
+  { value: "nl_to_sql_first", label: "nl_to_sql_first" },
+  { value: "ontop", label: "ontop" },
+  { value: "nl_to_sql", label: "nl_to_sql" },
+  { value: "ontop_first", label: "ontop_first" },
+  { value: "best", label: "best" },
+];
+
 export const Playground: React.FC = () => {
   const runtimeContext = useContext(RuntimeConfigContext);
   const { namespaceId: urlNamespaceId } = useParams<{ namespaceId: string }>();
@@ -64,6 +82,8 @@ export const Playground: React.FC = () => {
   // Sent as options.mode on every query. Defaults to "standard" to match serve's
   // deployment default; deep reasoning (~140s p50 vs ~30s) is opt-in via the toggle.
   const [mode, setMode] = useState<ExecutionMode>("standard");
+  // Sent as options.strategy on every query. Defaults to serve's default.
+  const [strategy, setStrategy] = useState<QueryStrategy>("nl_to_sql_first");
   const [selectedMessage, setSelectedMessage] = useState<
     ChatMessageType | undefined
   >();
@@ -110,7 +130,7 @@ export const Playground: React.FC = () => {
   const handleSubmit = () => {
     const query = inputValue.trim();
     if (!query || !namespaceId) return;
-    sendQuery(query, mode);
+    sendQuery(query, mode, strategy);
     setInputValue("");
     // Scroll to bottom after sending a query (user expects to see their message)
     requestAnimationFrame(() => {
@@ -121,10 +141,10 @@ export const Playground: React.FC = () => {
   const handleSamplePrompt = useCallback(
     (question: string) => {
       if (!namespaceId) return;
-      sendQuery(question, mode);
+      sendQuery(question, mode, strategy);
       setInputValue("");
     },
-    [namespaceId, sendQuery, mode],
+    [namespaceId, sendQuery, mode, strategy],
   );
 
   const findUserQuery = useCallback(
@@ -227,6 +247,20 @@ export const Playground: React.FC = () => {
               label="Execution mode"
               options={EXECUTION_MODE_OPTIONS}
             />
+            <Select
+              selectedOption={
+                STRATEGY_OPTIONS.find((o) => o.value === strategy) ?? null
+              }
+              onChange={({ detail }) => {
+                const picked = STRATEGY_OPTIONS.find(
+                  (o) => o.value === detail.selectedOption.value,
+                );
+                if (picked) setStrategy(picked.value);
+              }}
+              options={STRATEGY_OPTIONS}
+              ariaLabel="Query strategy"
+              data-testid="strategy-select"
+            />
             <Button
               variant="normal"
               onClick={newChat}
@@ -327,7 +361,7 @@ export const Playground: React.FC = () => {
                   key={msg.id}
                   onRetry={
                     msg.role === "assistant" && !msg.isLoading
-                      ? () => retryQuery(msg, mode)
+                      ? () => retryQuery(msg, mode, strategy)
                       : undefined
                   }
                 >
@@ -356,7 +390,7 @@ export const Playground: React.FC = () => {
                     }
                     onRetry={
                       msg.role === "assistant" && msg.error
-                        ? () => retryQuery(msg, mode)
+                        ? () => retryQuery(msg, mode, strategy)
                         : undefined
                     }
                     stage={msg.stage}
