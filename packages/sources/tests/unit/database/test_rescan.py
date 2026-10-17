@@ -25,6 +25,7 @@ from coa_sources.database.rescan import (
     merge_rescan_table,
     merged_write_set,
     reconstruct_approved_baseline,
+    refresh_sampled_values,
 )
 from coa_sources.database.rescan_backup import build_rescan_backup
 
@@ -547,6 +548,53 @@ def test_merged_write_set_empty_when_nothing_changed():
     accepted = [_tbl(columns=cols)]
     fresh = [_tbl(columns=cols)]
     assert merged_write_set(diff_tables(accepted, fresh), accepted, fresh) == []
+
+
+def test_merged_write_set_refreshes_samples_on_unchanged_table_only():
+    """Live regression (coa-w2-dev): the first scan whose sampling succeeded
+    diffed as unchanged, so its samples were never written and induction saw
+    none. The unchanged table is now written back with ONLY its samples refreshed."""
+    accepted = [
+        _tbl(
+            name="employees",
+            columns=[
+                _col(
+                    "employment_status",
+                    "string",
+                    description="steward note",
+                    enrichment_source=EnrichmentSource.STEWARD_EDITED,
+                    review_status=ReviewStatus.APPROVED,
+                ),
+                _col("employee_id", "string", review_status=ReviewStatus.APPROVED),
+            ],
+        )
+    ]
+    fresh = [
+        _tbl(
+            name="employees",
+            columns=[
+                _col("employment_status", "string", distinct_values=["regular", "probation"]),
+                _col("employee_id", "string"),
+            ],
+        )
+    ]
+    diff = diff_tables(accepted, fresh)
+    assert diff.unchanged == ["db.employees"] and not diff.has_changes  # still not drift
+
+    (written,) = merged_write_set(diff, accepted, fresh)
+    status, emp_id = written.columns
+    assert status.distinct_values == ["regular", "probation"]
+    # Everything else is the accepted (curated, approved) column, untouched.
+    assert status.business_metadata.description == "steward note"
+    assert status.business_metadata.review_status == ReviewStatus.APPROVED
+    assert emp_id == accepted[0].columns[1]
+    assert written.business_metadata == accepted[0].business_metadata
+
+
+def test_refresh_sampled_values_none_when_samples_identical():
+    accepted = _tbl(columns=[_col("s", "string", distinct_values=["a", "b"])])
+    fresh = _tbl(columns=[_col("s", "string", distinct_values=["a", "b"])])
+    assert refresh_sampled_values(accepted, fresh) is None
 
 
 # ── reconstruct_approved_baseline (baseline = last APPROVED, not last scan) ────

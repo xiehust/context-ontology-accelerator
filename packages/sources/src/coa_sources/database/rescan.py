@@ -48,7 +48,7 @@ approve) happens in the write path, not here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from coa_common.datazone_forms import deserialize_form
@@ -443,8 +443,11 @@ def merged_write_set(diff: RescanDiff, accepted: list[Table], fresh: list[Table]
 
     Returns the merged version of each *modified* table (curated metadata kept,
     source shape refreshed — see :func:`merge_rescan_table`) plus each *added*
-    table as freshly scanned. *Unchanged* tables are omitted so their live asset
-    is left exactly as-is, and *removed* tables are omitted too — a re-scan never
+    table as freshly scanned, plus each *unchanged* table whose sampled
+    ``distinct_values`` moved (the accepted table with only its samples
+    refreshed — see :func:`refresh_sampled_values`). Other unchanged tables are
+    omitted so their live asset is left exactly as-is, and *removed* tables are
+    omitted too — a re-scan never
     deletes; a removed table's asset stays put until the steward approves the
     removal. Match is by ``table_id``.
     """
@@ -463,7 +466,38 @@ def merged_write_set(diff: RescanDiff, accepted: list[Table], fresh: list[Table]
         )
     for table_id in diff.added:
         to_write.append(fresh_by_id[table_id])
+    # Unchanged tables are otherwise skipped, but sampled distinct values are
+    # deliberately excluded from the diff — so a re-scan whose ONLY news is fresh
+    # samples (e.g. the first scan whose sampling actually succeeded) would drop
+    # them, and induction would never see them. Write the accepted table back
+    # with just its samples refreshed: curation, review status and every other
+    # field stay exactly as approved, so nothing becomes reviewable.
+    for table_id in diff.unchanged:
+        refreshed = refresh_sampled_values(accepted_by_id[table_id], fresh_by_id[table_id])
+        if refreshed is not None:
+            to_write.append(refreshed)
     return to_write
+
+
+def refresh_sampled_values(accepted: Table, fresh: Table) -> Table | None:
+    """``accepted`` with each column's ``distinct_values`` taken from ``fresh``.
+
+    Returns ``None`` when no column's samples differ, so a no-drift re-scan
+    still writes nothing for the table. Columns are matched by name; a column
+    absent from ``fresh`` keeps its stored samples. Only ``distinct_values``
+    changes — the returned table is otherwise the accepted one, field for field.
+    """
+    fresh_samples = {c.name: list(c.distinct_values) for c in fresh.columns}
+    changed = False
+    columns: list[Column] = []
+    for col in accepted.columns:
+        new_values = fresh_samples.get(col.name)
+        if new_values is not None and new_values != list(col.distinct_values):
+            columns.append(replace(col, distinct_values=new_values))
+            changed = True
+        else:
+            columns.append(col)
+    return replace(accepted, columns=columns) if changed else None
 
 
 def reconstruct_approved_baseline(live: list[Table], backup: dict[str, Any] | None, *, source_id: str) -> list[Table]:

@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 NAMESPACE_TAG_KEY = namespace_tag_key()
 
-AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+AWS_REGION: str = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 
 _deployment_account: str | None = None
 
