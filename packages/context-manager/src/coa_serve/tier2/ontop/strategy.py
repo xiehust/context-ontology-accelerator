@@ -20,7 +20,13 @@ from ...clients.base import VectorClient
 from ...exceptions import AccessDeniedError
 from ...step_ids import TOOL_FOR_STEP, StepId
 from ...trace import TraceCollector
-from ..strategy import StrategyContext, StrategyOption, StrategyResult, capped_max_rows
+from ..strategy import (
+    StrategyContext,
+    StrategyOption,
+    StrategyResult,
+    capped_max_rows,
+    empty_result_is_verified,
+)
 from .nl_to_sparql import NLtoSPARQL
 from .types import VectorHit
 from .vkg_translator import Tier2Result, VKGTranslator
@@ -134,12 +140,14 @@ class OntopStrategy:
             # against (owl:versionInfo). "unknown" is the service's own
             # missing-value sentinel, not a version — normalize it away (#986).
             vkg_version = tier2_result.vkg_result.ontology_version if tier2_result.vkg_result else ""
+            executed_sql = tier2_result.executed_sql or (tier2_result.vkg_result.sql if tier2_result.vkg_result else "")
+            row_count = tier2_result.query_result.row_count
             return StrategyResult(
                 # Report the statement that RAN, not Ontop's raw translate output.
                 # After the cross-source fix they differ whenever the query spans sources: the executed
                 # form is catalog-qualified, the raw form has bare names that resolve
                 # nowhere. Fall back to the raw SQL only if execution never set it.
-                sql=tier2_result.executed_sql or (tier2_result.vkg_result.sql if tier2_result.vkg_result else ""),
+                sql=executed_sql,
                 rows=tier2_result.query_result.rows,
                 columns=tier2_result.query_result.columns,
                 confidence=sparql_result.confidence,
@@ -147,9 +155,12 @@ class OntopStrategy:
                 trace_steps=[],
                 ontop_assembly=True,
                 sparql=sparql_result.sparql,
-                row_count=tier2_result.query_result.row_count,
+                row_count=row_count,
                 truncated=tier2_result.query_result.truncated,
                 ontology_version="" if vkg_version == "unknown" else vkg_version,
+                # Same proof as NL→SQL, read off the compiled SQL: SPARQL string
+                # literals survive Ontop translation as SQL literals.
+                empty_verified=row_count == 0 and empty_result_is_verified(executed_sql, query),
             )
 
         return None

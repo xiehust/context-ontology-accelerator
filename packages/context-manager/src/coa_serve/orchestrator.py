@@ -39,7 +39,9 @@ from .tier2.strategy import (
     StrategyOption,
     StrategyResult,
     StructuredQueryTier,
+    _failed_step_id,
     capped_max_rows,
+    is_unverified_empty,
     normalize_strategy_option,
 )
 from .tier3.knowledge_retriever import VECTOR_SEARCH_TIMEOUT_S, KnowledgeRetriever
@@ -325,6 +327,7 @@ class Orchestrator:
                 model_id=model_id_override,
                 deadline=deadline,
                 declined_metric=declined_metric,
+                tier3_has_documents=not gating.skip_tier3_vector_search,
             )
             if strategy_result:
                 return strategy_result
@@ -665,6 +668,7 @@ class Orchestrator:
         model_id: str | None = None,
         deadline: Deadline | None = None,
         declined_metric: DeclinedMetricContext | None = None,
+        tier3_has_documents: bool = True,
     ) -> tuple[InvokeResponse | None, str | None]:
         """Run Tier 2 strategies and return (response, sparql_for_tier3_grounding).
 
@@ -674,6 +678,11 @@ class Orchestrator:
         ``declined_metric`` carries the governed definition Tier-1 matched but
         declined, so the SQL writer extends the authored formula rather than
         composing a replacement for it.
+
+        ``tier3_has_documents`` says whether Tier 3 has a document index to
+        consult. An unverified empty Tier-2 result falls through to Tier 3 only
+        when it does; on a structured-only namespace the empty table is still the
+        best answer available.
         """
         context = StrategyContext(
             embedding=embedding,
@@ -709,6 +718,31 @@ class Orchestrator:
                     namespace=namespace,
                 )
                 result = None
+
+            # Empty-result gate: zero rows clear the confidence floor easily (the
+            # model rates its own guessed filter), so confidence cannot tell
+            # "no such entity" from "wrong filter value". Only a verified empty
+            # — the filter literal came from the user's question — is final.
+            # Otherwise hand the question to Tier 3, keeping the SPARQL (if any)
+            # as a graph-grounding hint. Pinned Tier 2 keeps the empty table.
+            if result is not None and tier_override != 2 and tier3_has_documents and is_unverified_empty(result):
+                logger.info(
+                    "tier2_unverified_empty_fallthrough",
+                    tier2_confidence=result.confidence,
+                    strategy=result.strategy_name,
+                    namespace=namespace,
+                )
+                trace.record(
+                    _failed_step_id(result.strategy_name),
+                    "failed",
+                    0,
+                    detail={
+                        "strategy": result.strategy_name,
+                        "reason": "empty_unverified_fallthrough",
+                        "confidence": result.confidence,
+                    },
+                )
+                return None, result.sparql or None
 
         if result is None:
             if tier_override == 2:

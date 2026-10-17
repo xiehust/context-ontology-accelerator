@@ -1533,6 +1533,40 @@ describe("SourcesStack", () => {
         "arn:aws:athena:us-east-1:123456789012:workgroup/*",
       );
     });
+
+    it("db connector can read non-LF Glue table data for enum sampling, read-only and prefix-scoped", () => {
+      // Athena reads table data as the db-connector role; without this every
+      // sampling query fails PERMISSION_DENIED and no coa:distinctValues reach
+      // the ontology.
+      const fn = Object.values(
+        template.findResources("AWS::Lambda::Function"),
+      ).find((f) =>
+        String(f.Properties?.FunctionName ?? "").endsWith(
+          "sources-db-connector",
+        ),
+      );
+      const roleId: string = fn!.Properties.Role["Fn::GetAtt"][0];
+      const stmt = Object.values(template.findResources("AWS::IAM::Policy"))
+        .filter((p) =>
+          p.Properties.Roles?.some((r: { Ref?: string }) => r.Ref === roleId),
+        )
+        .flatMap(
+          (p) =>
+            p.Properties.PolicyDocument.Statement as Record<string, unknown>[],
+        )
+        .find((st) => st.Sid === "GlueTableDataReadForSampling");
+      expect(stmt).toBeDefined();
+      expect(stmt!.Action).toEqual([
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+      ]);
+      const resources = stmt!.Resource as string[];
+      expect(resources).toHaveLength(2);
+      for (const r of resources) {
+        expect(r).toMatch(/^arn:aws:s3:::[a-z0-9-]+-\*(\/\*)?$/);
+      }
+    });
   });
 
   describe("Bulk Review Pipeline", () => {

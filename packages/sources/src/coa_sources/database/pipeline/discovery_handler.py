@@ -58,7 +58,12 @@ from coa_sources.database.glue_ownership import (
 )
 from coa_sources.database.metadata_writer import write_to_datazone
 from coa_sources.database.metrics import emit_metric
-from coa_sources.database.rescan import diff_tables, merged_write_set, reconstruct_approved_baseline
+from coa_sources.database.rescan import (
+    diff_tables,
+    merged_write_set,
+    reconstruct_approved_baseline,
+    refresh_sampled_values,
+)
 from coa_sources.database.rescan_backup import BACKUP_SCAN_JOB_FIELD, backup_s3_key, build_rescan_backup
 from coa_sources.database.secret_binding import require_secret_namespace_binding
 from coa_sources.database.sub_types import CONNECTOR_BACKED_SUB_TYPES
@@ -339,7 +344,18 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     for tid in (existing_backup.get("modified_backup") or {})
                     if tid in unchanged_set and tid in accepted_by_id
                 )
-                write_tables += [accepted_by_id[tid] for tid in restore_ids]
+                # merged_write_set may already carry a samples-refreshed copy of a
+                # restored table; keep exactly one write per table, and keep the
+                # fresh samples on the restored approved version.
+                fresh_by_id = {t.table_id: t for t in metadata.tables}
+                restore_set = set(restore_ids)
+                write_tables = [t for t in write_tables if t.table_id not in restore_set]
+                write_tables += [
+                    refresh_sampled_values(accepted_by_id[tid], fresh_by_id[tid]) or accepted_by_id[tid]
+                    if tid in fresh_by_id
+                    else accepted_by_id[tid]
+                    for tid in restore_ids
+                ]
                 if restore_ids:
                     logger.info(
                         "Re-scan restoring %d table(s) back to their approved version for %s",
