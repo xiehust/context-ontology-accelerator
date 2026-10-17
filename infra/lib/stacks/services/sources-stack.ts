@@ -867,6 +867,22 @@ export class SourcesStack extends SCLStack {
     );
     // Athena writes query results to the shared spill bucket.
     props.storage.athenaSpillBucket.grantReadWrite(dbConnectorFn);
+    // Read the S3 data behind non-LF Glue tables during enum sampling. Athena
+    // reads table data AS THIS ROLE, so without it every sampling query fails
+    // PERMISSION_DENIED (s3:ListBucket) and — the sampler being non-fatal —
+    // the ontology silently gets no coa:distinctValues, leaving the SQL/SPARQL
+    // writers to guess categorical literals. Same read-only, prefix-scoped grant
+    // serve's runtime holds for answering queries over these tables.
+    {
+      const { prefix } = resolveContext(this.node);
+      dbConnectorFn.addToRolePolicy(
+        new iam.PolicyStatement({
+          sid: "GlueTableDataReadForSampling",
+          actions: ["s3:GetObject", "s3:ListBucket", "s3:GetBucketLocation"],
+          resources: [`arn:aws:s3:::${prefix}-*`, `arn:aws:s3:::${prefix}-*/*`],
+        }),
+      );
+    }
     // Read: Athena reads table data during enum sampling for Glue sources
     // backed by the sources-data bucket. Write: a re-scan writes its pre-rescan
     // backup blob here before merging onto live assets (approve/reject reads it).
