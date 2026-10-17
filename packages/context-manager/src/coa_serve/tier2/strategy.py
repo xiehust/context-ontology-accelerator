@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -104,6 +105,13 @@ class StrategyResult:
     ontology_version: str = ""
     retrieved_tables: list[str] = field(default_factory=list)
     expanded_tables: list[str] = field(default_factory=list)
+    # True when a ZERO-row result is a proven "no such entity" answer: a string
+    # literal the query filtered on was taken from the user's own question
+    # (e.g. "EMP-9999"). An empty result WITHOUT that proof is more often a
+    # wrong query -- a guessed categorical value such as 'active' when the
+    # column holds 'regular' -- so it must not end the request as an empty table.
+    # Meaningless when row_count > 0.
+    empty_verified: bool = False
 
 
 @dataclass
@@ -234,6 +242,78 @@ def is_low_confidence_empty(result: StrategyResult) -> bool:
     return result.row_count == 0 and result.confidence < EMPTY_RESULT_CONFIDENCE_FLOOR
 
 
+def is_unverified_empty(result: StrategyResult) -> bool:
+    """True when a result returned no rows WITHOUT proof that the emptiness is real.
+
+    Confidence is the model's self-assessment and does not distinguish "this
+    entity does not exist" from "I filtered on a value I guessed". Only
+    ``empty_verified`` (set by a strategy that saw a user-supplied literal in its
+    filter) does, so an unverified empty is kept as a last resort: the next
+    strategy is tried, and the orchestrator falls through to Tier 3 when the
+    namespace has documents to consult.
+    """
+    return result.row_count == 0 and not result.empty_verified
+
+
+_SQL_STRING_LITERAL = re.compile(r"'((?:[^']|'')*)'")
+# Ignore very short literals ('a', 'Y') — they match almost any question.
+_MIN_USER_LITERAL_LEN = 2
+
+
+def user_supplied_literal_in_sql(sql: str, query: str) -> bool:
+    """True if a string literal filtered on in ``sql`` came from the user's ``query``.
+
+    Used to decide, on a ZERO-row result, whether the filter value was taken
+    straight from the user's question. If so, an empty result is the correct
+    "no such entity" answer (and a correction must not loosen/re-case/substitute
+    the value, which fabricates rows for a different, real entity). If not, an
+    empty result may be a genuinely wrong query (bad JOIN, guessed categorical
+    value) and is not a final answer.
+
+    Scope: single-quoted STRING literals only — proper-noun / categorical entity
+    values. Numeric literals are not protected (they are far more likely to be
+    incidental). Match is case-insensitive substring, since the model may
+    re-case a value (e.g. user "acme" → SQL 'ACME'). Works on Ontop-compiled SQL
+    too: the SPARQL string literals survive translation as SQL literals.
+    """
+    if not sql or not query:
+        return False
+    q = query.lower()
+    for raw in _SQL_STRING_LITERAL.findall(sql):
+        value = raw.replace("''", "'").strip()
+        if len(value) >= _MIN_USER_LITERAL_LEN and value.lower() in q:
+            return True
+    return False
+
+
+# Ontop builds subject IRIs from templates (CONCAT('http://.../employee/', id)),
+# so its SQL carries IRI-prefix literals the user never typed. They are not
+# filter values and must not count against verification.
+_IRI_LITERAL_PREFIXES = ("http://", "https://", "urn:")
+
+
+def empty_result_is_verified(sql: str, query: str) -> bool:
+    """True when a ZERO-row result can be trusted as a real "no data" answer.
+
+    Stricter than :func:`user_supplied_literal_in_sql`: EVERY string filter
+    value must come from the user's question. A query with no string literal
+    at all ("show all claims") is verified too — the database confirmed the
+    unfiltered set is empty. One model-invented value ('active' when the column
+    holds 'regular') makes the emptiness unprovable, even next to a value the
+    user did give.
+    """
+    if not sql:
+        return False
+    q = (query or "").lower()
+    for raw in _SQL_STRING_LITERAL.findall(sql):
+        value = raw.replace("''", "'").strip()
+        if len(value) < _MIN_USER_LITERAL_LEN or value.lower().startswith(_IRI_LITERAL_PREFIXES):
+            continue
+        if value.lower() not in q:
+            return False
+    return True
+
+
 def _failed_step_id(strategy_name: str) -> str:
     """Trace step ID for an abandoned strategy, namespaced by its family."""
     family = "sql" if strategy_name == StrategyOption.NL_TO_SQL else "vkg"
@@ -300,6 +380,7 @@ class StructuredQueryTier:
         self, query: str, namespace: str, context: StrategyContext, strategies: list[StructuredQueryStrategy]
     ) -> StrategyResult | None:
         attempted: list[str] = []
+        unverified_empty: StrategyResult | None = None
         for strategy in strategies:
             attempted.append(strategy.name)
             try:
@@ -326,6 +407,29 @@ class StructuredQueryTier:
                                 "confidence": result.confidence,
                             },
                         )
+                        continue
+                    if is_unverified_empty(result):
+                        # Confident but unproven empty: the strategy may have
+                        # filtered on a guessed value. Keep the FIRST one as a
+                        # last resort and let the next strategy try — returning it
+                        # now would end the request on an empty table.
+                        logger.info(
+                            "strategy_unverified_empty",
+                            strategy=strategy.name,
+                            confidence=result.confidence,
+                            attempted=attempted,
+                        )
+                        context.trace.record(
+                            _failed_step_id(strategy.name),
+                            "failed",
+                            0,
+                            detail={
+                                "strategy": strategy.name,
+                                "reason": "empty_unverified",
+                                "confidence": result.confidence,
+                            },
+                        )
+                        unverified_empty = unverified_empty or result
                         continue
                     logger.info(
                         "strategy_resolved",
@@ -359,6 +463,18 @@ class StructuredQueryTier:
                     detail={"strategy": strategy.name, "error": type(e).__name__},
                 )
                 continue
+        if unverified_empty is not None:
+            # Nothing better found. Hand the empty back marked unverified; the
+            # orchestrator decides whether Tier 3 can do better.
+            logger.info(
+                "strategy_resolved",
+                strategy=unverified_empty.strategy_name,
+                confidence=unverified_empty.confidence,
+                row_count=0,
+                attempted=attempted,
+                empty_verified=False,
+            )
+            return unverified_empty
         logger.info("strategy_all_failed", attempted=attempted)
         return None
 
@@ -473,6 +589,10 @@ class StructuredQueryTier:
         # confidence nor its notional authority is a safe ranking signal today.
         # Until the VKG path improves, prefer the strategy that measurably works.
         acceptable.sort(key=lambda pair: (_strategy_precedence(pair[0].strategy_name), -pair[0].confidence))
+        # An unverified empty only wins when no candidate has rows or a proven
+        # empty — otherwise precedence could pick NL→SQL's guessed-filter empty
+        # over Ontop's real rows.
+        acceptable.sort(key=lambda pair: is_unverified_empty(pair[0]))
         winner, winner_ctx = acceptable[0]
         logger.info(
             "tier2_parallel_winner",

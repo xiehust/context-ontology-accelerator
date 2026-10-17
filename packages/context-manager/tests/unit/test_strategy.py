@@ -152,8 +152,9 @@ class TestSequentialPolicy:
         s2.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_confident_empty_is_accepted(self):
-        """A zero-row result with confidence >= floor is a valid 'no data' answer."""
+    async def test_unverified_confident_empty_tries_next_strategy(self):
+        """A confident zero-row result without user-literal proof is NOT final:
+        the next strategy runs and its rows win (guessed-filter regression)."""
         empty_confident = _make_empty_result("a", confidence=0.8)
         s1 = _make_strategy("a", result=empty_confident)
         s2 = _make_strategy("b", result=_make_result("b", confidence=0.9))
@@ -162,11 +163,45 @@ class TestSequentialPolicy:
         ctx = StrategyContext(trace=TraceCollector())
         result = await tier.resolve("query", "ns", ctx)
 
-        # Confident empty result stands; the next strategy is never tried.
+        assert result is not None
+        assert result.strategy_name == "b"
+        assert result.row_count == 1
+        s2.resolve.assert_awaited_once()
+        assert any(s.detail and s.detail.get("reason") == "empty_unverified" for s in ctx.trace.steps)
+
+    @pytest.mark.asyncio
+    async def test_verified_empty_is_accepted(self):
+        """A zero-row result whose filter came from the user is a valid 'no data' answer."""
+        empty_verified = _make_empty_result("a", confidence=0.8)
+        empty_verified.empty_verified = True
+        s1 = _make_strategy("a", result=empty_verified)
+        s2 = _make_strategy("b", result=_make_result("b", confidence=0.9))
+        tier = StructuredQueryTier(strategies=[s1, s2])
+
+        ctx = StrategyContext(trace=TraceCollector())
+        result = await tier.resolve("query", "ns", ctx)
+
+        # Verified empty stands; the next strategy is never tried.
         assert result is not None
         assert result.strategy_name == "a"
         assert result.row_count == 0
         s2.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_all_unverified_empty_returns_first_as_last_resort(self):
+        """When nothing beats an unverified empty, the first one is returned (still
+        unverified) so the orchestrator can decide on Tier 3."""
+        s1 = _make_strategy("a", result=_make_empty_result("a", confidence=0.8))
+        s2 = _make_strategy("b", result=_make_empty_result("b", confidence=0.9))
+        tier = StructuredQueryTier(strategies=[s1, s2])
+
+        ctx = StrategyContext(trace=TraceCollector())
+        result = await tier.resolve("query", "ns", ctx)
+
+        assert result is not None
+        assert result.strategy_name == "a"
+        assert result.empty_verified is False
+        s2.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_all_low_confidence_empty_returns_none(self):
@@ -368,6 +403,20 @@ class TestParallelPolicy:
         assert result is not None
         assert result.strategy_name == "a"
         assert result.row_count == 0
+
+    @pytest.mark.asyncio
+    async def test_rows_beat_unverified_empty_despite_precedence(self):
+        """nl_to_sql outranks ontop by precedence, but its unverified empty must not
+        beat ontop's real rows."""
+        n = _make_strategy("nl_to_sql", result=_make_empty_result("nl_to_sql", confidence=0.9))
+        o = _make_strategy("ontop", result=_make_result("ontop", confidence=0.6))
+        tier = StructuredQueryTier(strategies=[n, o])
+
+        ctx = StrategyContext(trace=TraceCollector())
+        result = await tier.resolve("query", "ns", ctx, option="best")
+
+        assert result is not None
+        assert result.strategy_name == "ontop"
 
     @pytest.mark.asyncio
     async def test_winner_trace_steps_merged_into_caller(self):
@@ -719,6 +768,66 @@ class TestOrchestratorWithStrategy:
         response = await orch.resolve(request)
         # Strategy fails → falls through to Tier 3
         assert response.result.tier == 3
+
+    @pytest.mark.asyncio
+    async def test_unverified_empty_falls_through_to_tier3(self):
+        """Live regression (c52895c8): a confident 0-row result from a guessed filter
+        value ('active' vs 'regular') must reach Tier 3, not end as an empty table."""
+        from coa_serve.models import InvokeRequest
+
+        empty = _make_empty_result("nl_to_sql", confidence=0.65)
+        empty.sparql = "SELECT ?x WHERE { ?x a <urn:C> }"
+        orch, _ = self._make_orchestrator_with_strategy(empty)
+
+        response = await orch.resolve(InvokeRequest(query="每个城市有多少名在职员工？", namespace="demo"))
+
+        assert response.result.tier == 3
+        assert response.result.synthesized_answer == "Fallback."
+        # SPARQL still forwarded as the Tier-3 grounding hint.
+        kwargs = orch._knowledge_retriever.resolve.await_args.kwargs
+        assert kwargs.get("tier2_sparql_hint") == empty.sparql
+
+    @pytest.mark.asyncio
+    async def test_verified_empty_is_returned_as_tier2_answer(self):
+        """A 0-row result whose filter literal came from the user ('EMP-9999') is final."""
+        from coa_serve.models import InvokeRequest
+
+        empty = _make_empty_result("nl_to_sql", confidence=0.9)
+        empty.empty_verified = True
+        orch, _ = self._make_orchestrator_with_strategy(empty)
+
+        response = await orch.resolve(InvokeRequest(query="员工 EMP-9999 的入职日期是哪天？", namespace="demo"))
+
+        assert response.result.tier == 2
+        assert response.result.result_rows == []
+        orch._knowledge_retriever.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unverified_empty_kept_when_namespace_has_no_documents(self):
+        """Structured-only namespace: Tier 3 has nothing to retrieve, so the empty
+        table is still the best answer."""
+        from coa_serve.models import InvokeRequest
+        from coa_serve.orchestrator import TierGating
+
+        orch, _ = self._make_orchestrator_with_strategy(_make_empty_result("nl_to_sql", confidence=0.65))
+        orch._resolve_source_gating = AsyncMock(return_value=TierGating(skip_tier3_vector_search=True))
+
+        response = await orch.resolve(InvokeRequest(query="q", namespace="demo"))
+
+        assert response.result.tier == 2
+        orch._knowledge_retriever.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unverified_empty_kept_when_tier2_pinned(self):
+        """tierOverride=2 never falls through: the empty table is returned, not 404."""
+        from coa_serve.models import InvokeRequest
+
+        orch, _ = self._make_orchestrator_with_strategy(_make_empty_result("nl_to_sql", confidence=0.65))
+
+        response = await orch.resolve(InvokeRequest(query="q", namespace="demo", options={"tierOverride": 2}))
+
+        assert response.result.tier == 2
+        assert response.result.result_rows == []
 
 
 # ── model_id propagation ──────────────────────────────────────────────────

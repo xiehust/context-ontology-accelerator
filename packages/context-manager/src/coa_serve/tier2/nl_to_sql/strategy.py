@@ -26,7 +26,6 @@ one correction shot. Correction likewise fires on a true execution error.
 from __future__ import annotations
 
 import os
-import re
 import time
 from typing import TYPE_CHECKING
 
@@ -38,7 +37,14 @@ from ...exceptions import AccessDeniedError, AmbiguousReferenceError
 from ...identity import display_principal
 from ...step_ids import StepId
 from ..sql_firewall import FirewallResult, SQLFirewall, UnsafeSQLError, tables_visible_to
-from ..strategy import StrategyContext, StrategyOption, StrategyResult, capped_max_rows
+from ..strategy import (
+    StrategyContext,
+    StrategyOption,
+    StrategyResult,
+    capped_max_rows,
+    empty_result_is_verified,
+    user_supplied_literal_in_sql,
+)
 from ..table_qualifier import PreparedSQL, SourceLookup, prepare_execution_sql
 from ..tools import OntologyGraphTool
 from .sql_generator import NLtoSQLResult, SQLGenerator, sql_table_routing, table_sources_need_preparation
@@ -96,11 +102,6 @@ def _resolve_max_shots() -> int:
         return _DEFAULT_MAX_SHOTS
 
 
-# Single-quoted SQL string literals, handling the '' escape (e.g. 'O''Brien').
-_SQL_STRING_LITERAL = re.compile(r"'((?:[^']|'')*)'")
-# Shortest literal we treat as a "user value". A 1-char filter is too likely to
-# be an incidental substring of the question to protect from correction.
-_MIN_USER_LITERAL_LEN = 2
 # Default per-statement execution timeout (seconds) — the NON-REST fallback used
 # only when no request deadline is threaded (the long streaming/AgentCore path,
 # RESOLVE_TIMEOUT_S ~170s, or an unwired caller). Preserves the historical fixed
@@ -177,33 +178,6 @@ def _graph_expand_enabled(options: dict | None = None) -> bool:
     if deployment is not None:
         return deployment
     return _GRAPH_EXPAND_DEFAULT
-
-
-def _user_supplied_literal_in_sql(sql: str, query: str) -> bool:
-    """True if a string literal filtered on in ``sql`` came from the user's ``query``.
-
-    Used to decide, on a ZERO-row result, whether the filter value was taken
-    straight from the user's question. If so, an empty result is the correct
-    "no such entity" answer and the self-correction shot must NOT be allowed to
-    loosen/re-case/substitute that value — doing so fabricates rows for a
-    different, real entity (the reported bug). If no user-supplied literal is
-    involved, an empty result may be a genuinely wrong query (bad JOIN,
-    over-restrictive derived filter) that still warrants correction.
-
-    Scope: single-quoted STRING literals only — the reported failure is
-    proper-noun / categorical entity values. Numeric literals are intentionally
-    not protected (they are far more likely to be incidental and rarely cause a
-    fabricated-entity substitution). Match is case-insensitive substring, since
-    the model may re-case a value (e.g. user "acme" → SQL 'ACME').
-    """
-    if not sql or not query:
-        return False
-    q = query.lower()
-    for raw in _SQL_STRING_LITERAL.findall(sql):
-        value = raw.replace("''", "'").strip()
-        if len(value) >= _MIN_USER_LITERAL_LEN and value.lower() in q:
-            return True
-    return False
 
 
 class NLtoSQLStrategy:
@@ -490,7 +464,13 @@ class NLtoSQLStrategy:
                 # user-supplied literal is involved, an empty result may instead be
                 # a genuinely wrong query (bad JOIN / over-restrictive derived
                 # filter), which still gets the one correction shot.
-                user_value_filter = exec_result.row_count == 0 and _user_supplied_literal_in_sql(
+                user_value_filter = exec_result.row_count == 0 and user_supplied_literal_in_sql(
+                    fw_result.authorized_sql, query
+                )
+                # Only this proof makes an empty result a final "no such entity"
+                # answer downstream: every filter value came from the user (or
+                # there is none). A merely out-of-shots empty is unverified.
+                result.empty_verified = exec_result.row_count == 0 and empty_result_is_verified(
                     fw_result.authorized_sql, query
                 )
                 final_empty = exec_result.row_count == 0 and (user_value_filter or shot >= self._max_shots)

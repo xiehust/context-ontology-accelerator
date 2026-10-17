@@ -263,12 +263,20 @@ class TestOrchestratorTier2:
         assert "empty result" in response.result.confidence.rationale.lower()
 
     @pytest.mark.asyncio
-    async def test_tier2_empty_result_still_accepted_without_pin(self):
-        """Empty T2 result is still a valid answer (DB confirmed the query)."""
+    async def test_tier2_verified_empty_result_still_accepted_without_pin(self):
+        """A VERIFIED empty T2 result (no model-invented filter value) is a valid answer."""
         orch = _make_orchestrator(tier2_success=True, tier2_empty=True)
+        orch._structured_query_tier._strategies[0].resolve.return_value.empty_verified = True
         response = await orch.resolve(InvokeRequest(query="Show all claims", namespace="demo"))
         assert response.result.tier == 2
         assert response.result.confidence.score < 0.85
+
+    @pytest.mark.asyncio
+    async def test_tier2_unverified_empty_result_falls_through_without_pin(self):
+        """An UNVERIFIED empty T2 result (filter value may be guessed) goes to Tier 3."""
+        orch = _make_orchestrator(tier2_success=True, tier2_empty=True)
+        response = await orch.resolve(InvokeRequest(query="Show all claims", namespace="demo"))
+        assert response.result.tier == 3
 
     @pytest.mark.asyncio
     async def test_tier2_low_confidence_still_returns_if_db_succeeded(self):
