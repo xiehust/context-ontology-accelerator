@@ -11,6 +11,11 @@ import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { Construct } from "constructs";
 import { resolveContext } from "../../context";
 import { agentCoreSupportedSubnets } from "../../utils/agentcore-az";
+import {
+  agentOauthEnabled,
+  AGENT_OAUTH_CLIENT_ID_PARAM,
+  runtimeJwtAuthorizer,
+} from "../../utils/agent-oauth";
 import { brandEnv } from "../../utils/brand-env";
 import { parseEcrImageUri } from "../../utils/ecr-utils";
 import { Paths } from "../../paths";
@@ -73,6 +78,14 @@ export class McpStack extends SCLStack {
       this,
       `${ssmPrefix}/mcp-client-id`,
     );
+    // Written by the auth stack only when agentOauthCallbackUrls is set, so
+    // read it only in that mode (an unconditional read would fail deploys).
+    const agentOauthClientId = agentOauthEnabled(this.node)
+      ? ssm.StringParameter.valueForStringParameter(
+          this,
+          `${ssmPrefix}/${AGENT_OAUTH_CLIENT_ID_PARAM}`,
+        )
+      : undefined;
     // The JWT claim name carrying group membership — "cognito:groups" for
     // Cognito, or the customer's configured claim (oidcSettings.groupClaim,
     // default "groups") for direct OIDC. Read from SSM instead of hardcoding
@@ -137,15 +150,13 @@ export class McpStack extends SCLStack {
       agentRuntimeArtifact:
         bedrockagentcore.AgentRuntimeArtifact.fromImageUri(imageUri),
       protocolConfiguration: bedrockagentcore.ProtocolType.MCP,
-      authorizerConfiguration:
-        bedrockagentcore.RuntimeAuthorizerConfiguration.usingJWT(
-          `${issuerUrl}/.well-known/openid-configuration`,
-          // allowedClients omitted: AgentCore uses AND semantics, and ID tokens
-          // don't carry client_id. We use allowedAudience (aud claim) instead,
-          // which is present on both ID tokens and works with the CM runtime.
-          undefined,
-          [clientId, mcpClientId],
-        ),
+      authorizerConfiguration: runtimeJwtAuthorizer(this.node, issuerUrl, [
+        // Default mode: allowedAudience (aud claim). allowedClients is
+        // omitted because AgentCore uses AND semantics and ID tokens don't
+        // carry client_id. See utils/agent-oauth.ts for the 3LO variant.
+        clientId,
+        mcpClientId,
+      ]),
       networkConfiguration:
         bedrockagentcore.RuntimeNetworkConfiguration.usingVpc(this, {
           vpc: props.vpc,
@@ -183,9 +194,15 @@ export class McpStack extends SCLStack {
         // below. Same issuer/audience trust anchor, IdP-agnostic (Cognito,
         // Okta, EntraID, ...) via coa_common.auth.build_token_authorizer.
         // MCP callers authenticate as the MCP/CLI client, so JWT_CLIENT_ID
-        // uses mcpClientId (not the web app's clientId).
+        // uses mcpClientId (not the web app's clientId). With agent OAuth
+        // enabled it also lists the agent client: a comma-separated
+        // allowlist matched against `aud` (ID token) or `client_id` (access
+        // token) — this is the client boundary the runtime authorizer no
+        // longer enforces in that mode.
         JWT_ISSUER_URL: issuerUrl,
-        JWT_CLIENT_ID: mcpClientId,
+        JWT_CLIENT_ID: agentOauthClientId
+          ? `${mcpClientId},${agentOauthClientId}`
+          : mcpClientId,
       },
       description:
         "MCP Server - protocol adapter with PKCE auth, forwards execution to Context Manager",

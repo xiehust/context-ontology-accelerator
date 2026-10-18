@@ -9,6 +9,10 @@ import { SCLStack } from "../../constructs/scl-stack";
 import { UserPoolUser } from "../../constructs/user-pool-user";
 import { resolveContext } from "../../context";
 import {
+  agentOauthCallbackUrls,
+  AGENT_OAUTH_CLIENT_ID_PARAM,
+} from "../../utils/agent-oauth";
+import {
   CTX_IDP_TYPE,
   CTX_CALLBACK_URLS,
   CTX_LOGOUT_URLS,
@@ -40,6 +44,8 @@ export class IdpAuthenticationStack extends SCLStack {
   public readonly userPool?: cognito.UserPool;
   public readonly userPoolClient?: cognito.UserPoolClient;
   public readonly mcpClient?: cognito.UserPoolClient;
+  /** Confidential client for agent-platform 3LO; only with agentOauthCallbackUrls. */
+  public readonly agentOauthClient?: cognito.UserPoolClient;
   public readonly clientId: string;
   public readonly mcpClientId: string;
   public readonly issuerUrl: string;
@@ -330,6 +336,47 @@ export class IdpAuthenticationStack extends SCLStack {
 
     this.mcpClientId = this.mcpClient.userPoolClientId;
     this.issuerUrl = `https://cognito-idp.${this.region}.amazonaws.com/${this.userPool.userPoolId}`;
+
+    // ── Agent platform OAuth client (opt-in, confidential) ─────────
+    // For agent platforms that broker per-user 3-legged OAuth through a
+    // token vault (e.g. an AgentCore Identity OAuth2 credential provider
+    // behind an AgentCore Gateway target in "act as user" mode). Those
+    // vaults require a client secret, so the public web/MCP clients cannot
+    // be reused. The platform presents the user's ACCESS token; see
+    // utils/agent-oauth.ts for how the runtimes accept it.
+    const agentCallbackUrls = agentOauthCallbackUrls(this.node);
+    if (agentCallbackUrls.length) {
+      this.agentOauthClient = this.userPool.addClient("AgentOauthClient", {
+        userPoolClientName: this.prefixed("agent-oauth-client"),
+        generateSecret: true,
+        // Browser-based consent only: no password/SRP grants for a client
+        // whose secret lives in a third-party vault.
+        authFlows: {},
+        supportedIdentityProviders: supportedIdPs,
+        oAuth: {
+          flows: { authorizationCodeGrant: true },
+          scopes: [
+            cognito.OAuthScope.OPENID,
+            cognito.OAuthScope.EMAIL,
+            cognito.OAuthScope.PROFILE,
+          ],
+          callbackUrls: agentCallbackUrls,
+        },
+        preventUserExistenceErrors: true,
+        accessTokenValidity: cdk.Duration.hours(1),
+        idTokenValidity: cdk.Duration.hours(1),
+        refreshTokenValidity: cdk.Duration.days(30),
+      });
+      new ssm.StringParameter(this, "SsmAgentOauthClientId", {
+        parameterName: `${ssmPrefix}/${AGENT_OAUTH_CLIENT_ID_PARAM}`,
+        stringValue: this.agentOauthClient.userPoolClientId,
+      });
+      new cdk.CfnOutput(this, "AgentOauthClientId", {
+        value: this.agentOauthClient.userPoolClientId,
+        description:
+          "Confidential Cognito client for agent-platform 3LO (secret: describe-user-pool-client)",
+      });
+    }
 
     // ── SSM Parameters ─────────────────────────────────────────────
     new ssm.StringParameter(this, "SsmUserPoolId", {

@@ -329,3 +329,37 @@ class TestJWKSCaching:
             authorizer._get_jwks()
             authorizer._get_jwks()
             assert mock_get.call_count == 2
+
+
+class TestClientAllowlist:
+    """``client_id`` may be a comma-separated allowlist (MCP + agent-OAuth clients)."""
+
+    _ISS = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool"
+
+    def _verify(self, make_token, jwks, client_ids: str, **claims):
+        base = {"sub": "user-123", "iss": self._ISS, "exp": int(time.time()) + 3600}
+        token = make_token({**base, **claims})
+        authorizer = CognitoTokenAuthorizer(user_pool_id="us-east-1_TestPool", region="us-east-1", client_id=client_ids)
+        with patch.object(authorizer, "_get_jwks", return_value=jwks):
+            return authorizer.verify_claims(f"Bearer {token}")
+
+    def test_id_token_from_first_client_accepted(self, _make_token, jwks_response):
+        claims = self._verify(_make_token, jwks_response, "mcp-client, agent-client", aud="mcp-client", token_use="id")
+        assert claims["sub"] == "user-123"
+
+    def test_access_token_from_second_client_accepted(self, _make_token, jwks_response):
+        # Cognito access tokens carry client_id and no aud.
+        claims = self._verify(_make_token, jwks_response, "mcp-client,agent-client", client_id="agent-client")
+        assert claims["client_id"] == "agent-client"
+
+    def test_client_outside_allowlist_rejected(self, _make_token, jwks_response):
+        with pytest.raises(ValueError, match="audience mismatch"):
+            self._verify(_make_token, jwks_response, "mcp-client,agent-client", client_id="web-client")
+
+    def test_single_client_still_exact_match(self, _make_token, jwks_response):
+        with pytest.raises(ValueError, match="audience mismatch"):
+            self._verify(_make_token, jwks_response, "mcp-client", aud="mcp-client-2")
+
+    def test_blank_entries_ignored(self, _make_token, jwks_response):
+        claims = self._verify(_make_token, jwks_response, " ,agent-client, ", client_id="agent-client")
+        assert claims["client_id"] == "agent-client"

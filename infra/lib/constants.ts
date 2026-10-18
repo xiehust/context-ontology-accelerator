@@ -30,6 +30,14 @@ export const CTX_PROJECT_TAG = "project_tag";
 export const CTX_IDP_TYPE = "idpType";
 export const CTX_CALLBACK_URLS = "callbackUrls";
 export const CTX_LOGOUT_URLS = "logoutUrls";
+/**
+ * Opt-in: OAuth callback URL(s) of an external agent platform's token vault
+ * (e.g. an AgentCore Identity OAuth2 credential provider). When set, the auth
+ * stack provisions a confidential Cognito client for 3-legged OAuth and the
+ * Serve/MCP runtimes accept that client's access tokens. JSON array or a
+ * single URL string.
+ */
+export const CTX_AGENT_OAUTH_CALLBACK_URLS = "agentOauthCallbackUrls";
 export const CTX_GRAPH_BASE_URI = "graph_base_uri";
 export const CTX_EVENT_SOURCE_PREFIX = "event_source_prefix";
 export const CTX_LAMBDA_RESERVED_CONCURRENCY = "lambda_reserved_concurrency";
