@@ -218,7 +218,7 @@ class BedrockEmbedder:
         cost_tracker: CostTracker | None = None,
     ) -> None:
         """Resolve model/region/timeout config and clamp the batch size (see class Args)."""
-        self.model_id = model_id or os.environ.get("BEDROCK_EMBED_MODEL_ID", DEFAULT_EMBED_MODEL_ID)
+        self.model_id: str = model_id or os.environ.get("BEDROCK_EMBED_MODEL_ID") or DEFAULT_EMBED_MODEL_ID
         self.dimensions = dimensions
         self._region = region or os.environ.get("BEDROCK_REGION", resolve_region())
         self._max_workers = max_workers

@@ -58,6 +58,49 @@ and the acting user's grants determine what the tool can do — a `data-analyst`
 grant restricted to certain tables via `tableAllowlist` restricts `query` tool
 calls the same way it would restrict a direct API call.
 
+## Agent platforms with a token vault (3LO through AgentCore Gateway)
+
+Agent platforms that broker per-user OAuth themselves — for example an
+AgentCore Gateway MCP-server target whose credential is an AgentCore Identity
+OAuth2 provider in "act as user" (Authorization Code) mode — need a
+**confidential** client, and they present the user's Cognito **access** token
+rather than an ID token. Neither works with the default deployment: the web
+and MCP clients are public (no secret), and the Serve/MCP runtimes only admit
+ID tokens (`allowedAudience`).
+
+Enable it per deployment with the `agentOauthCallbackUrls` context (the
+platform's OAuth callback URL; JSON array or a single URL), and pass the
+**same** context on every later deploy of the `auth`, `serve` and `mcp`
+stacks:
+
+```bash
+cdk deploy <prefix>-<env>-auth <prefix>-<env>-serve <prefix>-<env>-mcp -e \
+  --context agentOauthCallbackUrls=https://bedrock-agentcore.<region>.amazonaws.com/identities/oauth2/callback/<id>
+```
+
+This:
+
+- creates the `<prefix>-<env>-agent-oauth-client` app client (code grant,
+  `openid email profile`, client secret) and publishes its id to SSM
+  `/<prefix>/agent-oauth-client-id` (read the secret with
+  `aws cognito-idp describe-user-pool-client`);
+- switches both runtime authorizers from `allowedAudience` to an issuer-only
+  rule (`iss` = the user pool). AgentCore ANDs all configured checks and
+  `allowedClients` rejects ID tokens, so no client/audience combination admits
+  both token kinds. The client boundary moves into the MCP server, whose
+  independent check (`JWT_CLIENT_ID`) becomes the allowlist
+  `<mcp client>,<agent client>`, matched against `aud` or `client_id`.
+
+Register the confidential client in the platform (client id, secret, discovery
+URL `https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/openid-configuration`,
+scopes `openid email profile`) and point the gateway target at the MCP
+runtime's invocations URL.
+
+!!! warning "Access tokens carry no email"
+    Cognito access tokens have `sub` and `cognito:groups` but no `email`, so a
+    caller on this path matches grants made to `User::<sub>` or to one of its
+    groups, not grants made to its email address.
+
 ## Obtaining a Token (3LO, on behalf of a user)
 
 Agents obtain tokens through the standard Authorization Code flow with PKCE,

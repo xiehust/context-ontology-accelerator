@@ -65,7 +65,8 @@ class TokenAuthorizer(ABC):
     issuer:
         The expected ``iss`` claim value.
     audience:
-        The expected ``aud`` claim value. If ``None``, audience is not verified.
+        The expected ``aud`` claim value (``client_id`` for access tokens), or a
+        comma-separated allowlist of them. If ``None``, audience is not verified.
     jwks_uri:
         Explicit JWKS endpoint. If ``None``, discovered via OIDC well-known.
     jwks_cache_ttl:
@@ -90,6 +91,10 @@ class TokenAuthorizer(ABC):
         """
         self._issuer = issuer.rstrip("/")
         self._audience = audience
+        # ``audience`` may be a comma-separated allowlist (e.g. the MCP client
+        # plus an agent-platform OAuth client); a token passes when its
+        # ``aud`` (ID token) or ``client_id`` (access token) is any of them.
+        self._audiences: frozenset[str] = frozenset(a.strip() for a in (audience or "").split(",") if a.strip())
         self._configured_jwks_uri = jwks_uri
         self._jwks_cache_ttl = jwks_cache_ttl
 
@@ -244,11 +249,11 @@ class TokenAuthorizer(ABC):
 
             claims = jwt.decode(token, public_key, **kwargs)
 
-            if self._audience:
+            if self._audiences:
                 aud = claims.get("aud") or claims.get("client_id")
                 aud_list = [aud] if isinstance(aud, str) else (aud or [])
-                if self._audience not in aud_list:
-                    raise ValueError(f"Token audience mismatch: expected {self._audience}, got {aud}")
+                if not self._audiences.intersection(aud_list):
+                    raise ValueError(f"Token audience mismatch: expected one of {sorted(self._audiences)}, got {aud}")
 
             return claims
         except PyJWTError as exc:

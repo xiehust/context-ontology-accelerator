@@ -30,6 +30,7 @@ import {
   DEFAULT_GRAPH_URI_BASE,
 } from "../../constants";
 import { TABLE_NAMES } from "@coa/shared";
+import { runtimeJwtAuthorizer } from "../../utils/agent-oauth";
 
 export interface ServeStackProps extends cdk.StackProps {
   /** VPC for AgentCore Runtime network interfaces. */
@@ -444,20 +445,18 @@ export class ServeStack extends SCLStack {
         runtimeName,
         agentRuntimeArtifact:
           bedrockagentcore.AgentRuntimeArtifact.fromImageUri(imageUri),
-        authorizerConfiguration:
-          bedrockagentcore.RuntimeAuthorizerConfiguration.usingJWT(
-            `${issuerUrl}/.well-known/openid-configuration`,
-            // allowedClients is intentionally omitted. AgentCore verifies ALL
-            // configured fields (AND semantics), and `client_id` is an
-            // access-token-only claim — setting it would reject ID tokens.
-            // We validate the standard OIDC `aud` claim instead, which is
-            // IdP-agnostic and present on ID tokens from any compliant IdP.
-            // The web-app sends the ID token (carries email + groups) on both
-            // the WebSocket and REST (via data-layer) paths.
-            undefined,
-            // allowedAudience: accept ID tokens from web app AND MCP proxy
-            [clientId, mcpClientId], // allowedAudience — ID token `aud` == app client id
-          ),
+        authorizerConfiguration: runtimeJwtAuthorizer(this.node, issuerUrl, [
+          // Default mode: allowedAudience — ID token `aud` == app client id.
+          // allowedClients is intentionally omitted: AgentCore verifies ALL
+          // configured fields (AND semantics) and `client_id` is an
+          // access-token-only claim, so setting it would reject ID tokens.
+          // The web-app sends the ID token (carries email + groups) on both
+          // the WebSocket and REST (via data-layer) paths. With agent OAuth
+          // enabled the authorizer pins the issuer instead (utils/agent-oauth.ts):
+          // the MCP server forwards the agent platform's access token here.
+          clientId,
+          mcpClientId,
+        ]),
         // Defense-in-depth: even though NetworkStack pins the VPC's
         // AZs to AgentCore-supported ones, filter again here so an
         // imported VPC (or a future regression) can't sneak an

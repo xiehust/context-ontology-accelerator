@@ -135,7 +135,7 @@ class GuardrailScreener:
     ) -> None:
         """Store guardrail coordinates and defer client creation until first use (see class Args)."""
         self._guardrail_id = guardrail_id
-        self._guardrail_version = guardrail_version or os.environ.get("BEDROCK_GUARDRAIL_VERSION", "DRAFT")
+        self._guardrail_version: str = guardrail_version or os.environ.get("BEDROCK_GUARDRAIL_VERSION") or "DRAFT"
         self._guardrail_id_provider = guardrail_id_provider
         self._guardrail_version_provider = guardrail_version_provider
         # resolve_region (AWS_REGION → AWS_DEFAULT_REGION → us-east-1) rather than a
