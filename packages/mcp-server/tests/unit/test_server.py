@@ -261,6 +261,16 @@ class TestListMetricsTool:
         assert parsed["namespace"] == "sales"
 
     @pytest.mark.asyncio
+    async def test_preserves_non_ascii_text(self, monkeypatch, _local_dev):
+        async def fake_delegate(lc, ns, token, **kwargs):
+            return {"metrics": [{"name": "在职员工数"}], "namespace": ns}
+
+        monkeypatch.setattr(server.discovery, "list_metrics", fake_delegate)
+        out = await server.list_metrics(None, "sales")
+        assert "在职员工数" in out
+        assert "\\u" not in out
+
+    @pytest.mark.asyncio
     async def test_local_dev_passes_no_authorizer_context(self, monkeypatch, _local_dev):
         captured: dict = {}
 
@@ -526,6 +536,20 @@ class TestRagRetrievalTool:
         assert parsed["chunks"][0]["text"] == "chunk"
         assert captured["top_k"] == 3
         assert captured["min_score"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_preserves_non_ascii_text(self, monkeypatch, _local_dev):
+        """Chinese text is emitted literally, not as escaped code points."""
+        text = "员工当年可申请的年假天数 = 年度总额度 − 已使用天数（HR-LV-001 第 2.2 条）。"
+
+        async def fake_delegate(cm, query_text, ns, profile, token, **kwargs):
+            return {"chunks": [{"text": text}]}
+
+        monkeypatch.setattr(server.execution, "execute_rag_retrieval", fake_delegate)
+        out = await server.rag_retrieval(None, "年假", "sales")
+        assert text in out
+        assert "\\u" not in out
+        assert json.loads(out)["chunks"][0]["text"] == text
 
     @pytest.mark.asyncio
     async def test_forwards_source_and_entity_filters(self, monkeypatch, _local_dev):

@@ -38,6 +38,17 @@ from .tools.execution import ContextManagerError
 
 logger = structlog.get_logger(__name__)
 
+
+def _to_json(result: Any, *, default: Any = None) -> str:
+    """Serialize a tool result for the MCP text content block.
+
+    ``ensure_ascii=False`` keeps non-ASCII text (e.g. Chinese) as literal
+    characters instead of escaped code points, so downstream agents and humans
+    read it directly and it costs fewer tokens. The MCP transport is UTF-8.
+    """
+    return json.dumps(result, indent=2, ensure_ascii=False, default=default)
+
+
 # ── Server initialization ─────────────────────────────────────────────
 
 config = MCPConfig()
@@ -229,7 +240,7 @@ async def list_metrics(
         duration_ms = int((time.perf_counter() - start) * 1000)
         if caller:
             log_tool_invocation(caller, "list_metrics", namespaceId, duration_ms=duration_ms)
-        return json.dumps(result, indent=2)
+        return _to_json(result)
 
     except (ClaimsExtractionError, GrantResolutionError) as e:
         if caller:
@@ -291,7 +302,7 @@ async def describe_schema(
         duration_ms = int((time.perf_counter() - start) * 1000)
         if caller:
             log_tool_invocation(caller, "describe_schema", namespaceId, duration_ms=duration_ms)
-        return json.dumps(result, indent=2)
+        return _to_json(result)
 
     except (ClaimsExtractionError, GrantResolutionError) as e:
         if caller:
@@ -408,7 +419,7 @@ async def query(
         duration_ms = int((time.perf_counter() - start) * 1000)
         if caller:
             log_tool_invocation(caller, "query", namespaceId, duration_ms=duration_ms)
-        return json.dumps(result, indent=2, default=str)
+        return _to_json(result, default=str)
 
     except (ClaimsExtractionError, GrantResolutionError) as e:
         if caller:
@@ -463,7 +474,7 @@ async def translate_sparql(
         duration_ms = int((time.perf_counter() - start) * 1000)
         if caller:
             log_tool_invocation(caller, "translate_sparql", namespaceId, duration_ms=duration_ms)
-        return json.dumps(result, indent=2, default=str)
+        return _to_json(result, default=str)
 
     except (ClaimsExtractionError, GrantResolutionError) as e:
         if caller:
@@ -533,7 +544,7 @@ async def rag_retrieval(
         duration_ms = int((time.perf_counter() - start) * 1000)
         if caller:
             log_tool_invocation(caller, "rag_retrieval", namespaceId, duration_ms=duration_ms)
-        return json.dumps(result, indent=2, default=str)
+        return _to_json(result, default=str)
 
     except (ClaimsExtractionError, GrantResolutionError) as e:
         if caller:
@@ -603,7 +614,7 @@ async def graph_traversal(
         duration_ms = int((time.perf_counter() - start) * 1000)
         if caller:
             log_tool_invocation(caller, "graph_traversal", namespaceId, duration_ms=duration_ms)
-        return json.dumps(result, indent=2, default=str)
+        return _to_json(result, default=str)
 
     except (ClaimsExtractionError, GrantResolutionError) as e:
         if caller:
