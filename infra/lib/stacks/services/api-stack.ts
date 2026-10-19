@@ -32,6 +32,10 @@ import {
 import { Paths, fromRoot } from "../../paths";
 import { bundlePython } from "../../utils/python-bundling";
 import {
+  agentOauthEnabled,
+  AGENT_OAUTH_CLIENT_ID_PARAM,
+} from "../../utils/agent-oauth";
+import {
   readOpenApiSpec,
   mergeOpenApiPaths,
   injectLambdaProxyIntegrations,
@@ -152,6 +156,18 @@ export class ApiStack extends SCLStack {
       this,
       `${ssmPrefix}/userpool-client-id`,
     );
+    // Written by the auth stack only when agentOauthCallbackUrls is set, so
+    // read it only in that mode (an unconditional read would fail deploys).
+    // With it the authorizer's CLIENT_ID becomes the allowlist
+    // "<web client>,<agent client>": an agent platform's console can then call
+    // the REST API with the user's ACCESS token (client_id = agent client), the
+    // same token the Serve/MCP runtimes already admit.
+    const agentOauthClientId = agentOauthEnabled(this.node)
+      ? ssm.StringParameter.valueForStringParameter(
+          this,
+          `${ssmPrefix}/${AGENT_OAUTH_CLIENT_ID_PARAM}`,
+        )
+      : undefined;
     // The JWT claim name carrying group membership — "cognito:groups" for
     // Cognito, or whatever the customer's external IdP uses (configured as
     // oidcSettings.groupClaim, default "groups") for direct OIDC. Read from
@@ -186,7 +202,9 @@ export class ApiStack extends SCLStack {
       environment: {
         JWKS_ISSUER: issuerUrl,
         ...(props.jwksUri && { JWKS_URI: props.jwksUri }),
-        CLIENT_ID: clientId,
+        CLIENT_ID: agentOauthClientId
+          ? `${clientId},${agentOauthClientId}`
+          : clientId,
         GROUP_CLAIM_NAME: groupClaimName,
         ROLES_TABLE_NAME: props.rolesTable.tableName,
         RESOURCE_ROLE_MAPPINGS_TABLE_NAME:

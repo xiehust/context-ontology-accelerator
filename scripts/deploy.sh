@@ -29,6 +29,10 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # SMUS admin principal(s) — required, comma-separated IAM role/user ARN(s)
 # that human admins federate into (e.g. your IAM Identity Center
 # permission-set role): SCL_SMUS_ADMIN_ARNS=arn:aws:iam::123456789012:role/... make deploy-dev
+# Agent-platform OAuth client (3LO) callback URL(s), comma-separated — one per
+# agent platform environment; required on every deploy once set (see
+# scripts/agent-oauth-context.sh):
+#   SCL_AGENT_OAUTH_CALLBACK_URLS=https://bedrock-agentcore.<region>.amazonaws.com/identities/oauth2/callback/<id>,... make deploy-dev
 CONTEXT="--context env=$ENV"
 [ -n "${SCL_PREFIX:-}" ]        && CONTEXT="$CONTEXT --context resource_prefix=$SCL_PREFIX"
 [ -n "${SCL_PROJECT_TAG:-}" ]   && CONTEXT="$CONTEXT --context project_tag=$SCL_PROJECT_TAG"
@@ -47,6 +51,9 @@ CONTEXT="--context env=$ENV"
 [ -n "${SCL_NL2SQL_GRAPH_EXPAND:-}" ] && CONTEXT="$CONTEXT --context serve_nl2sql_graph_expand=$SCL_NL2SQL_GRAPH_EXPAND"
 [ -n "${SCL_NL2SQL_GRAPH_EXPAND_MAX_TABLES:-}" ] && CONTEXT="$CONTEXT --context serve_nl2sql_graph_expand_max_tables=$SCL_NL2SQL_GRAPH_EXPAND_MAX_TABLES"
 [ -n "${SCL_SMUS_ADMIN_ARNS:-}" ] && CONTEXT="$CONTEXT --context smus_admin_principal_arns=$SCL_SMUS_ADMIN_ARNS"
+# Agent OAuth (3LO) context, or refuse a deploy that would drop it.
+# shellcheck source=scripts/agent-oauth-context.sh
+. "$REPO_ROOT/scripts/agent-oauth-context.sh"
 
 # ── Preflight: SMUS admin principal ──────────────────────────────────────
 # NamespaceStack falls back to arn:aws:iam::<account>:role/Admin when
