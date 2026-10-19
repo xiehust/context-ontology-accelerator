@@ -68,13 +68,26 @@ rather than an ID token. Neither works with the default deployment: the web
 and MCP clients are public (no secret), and the Serve/MCP runtimes only admit
 ID tokens (`allowedAudience`).
 
-Enable it per deployment with the `agentOauthCallbackUrls` context (the
-platform's OAuth callback URL; JSON array or a single URL), and pass the
-**same** context on every later deploy of the `auth`, `serve` and `mcp`
-stacks:
+Enable it per deployment with the `agentOauthCallbackUrls` context: the
+platform's OAuth callback URL(s), one per agent platform environment, as a
+single URL, a comma-separated list or a JSON array. Through the deploy scripts,
+set `SCL_AGENT_OAUTH_CALLBACK_URLS` (comma-separated):
 
 ```bash
-cdk deploy <prefix>-<env>-auth <prefix>-<env>-serve <prefix>-<env>-mcp -e \
+SCL_AGENT_OAUTH_CALLBACK_URLS=https://bedrock-agentcore.<region>.amazonaws.com/identities/oauth2/callback/<id> \
+  make deploy-dev
+```
+
+Pass the **same** list on every later deploy of the `auth`, `serve` and `mcp`
+stacks. Without it the auth stack deletes the client and the runtimes fall
+back to ID tokens only, so every user consent the platform stored stops
+working. `scripts/deploy.sh` and `scripts/deploy-serve.sh` therefore refuse to
+run while the client exists and the variable is unset (set
+`SCL_REMOVE_AGENT_OAUTH=1` to remove it on purpose). A hand-run `cdk deploy`
+must pass the context itself:
+
+```bash
+cdk deploy <prefix>-<env>-auth <prefix>-<env>-serve <prefix>-<env>-mcp <prefix>-<env>-api -e \
   --context agentOauthCallbackUrls=https://bedrock-agentcore.<region>.amazonaws.com/identities/oauth2/callback/<id>
 ```
 
@@ -89,12 +102,24 @@ This:
   `allowedClients` rejects ID tokens, so no client/audience combination admits
   both token kinds. The client boundary moves into the MCP server, whose
   independent check (`JWT_CLIENT_ID`) becomes the allowlist
-  `<mcp client>,<agent client>`, matched against `aud` or `client_id`.
+  `<mcp client>,<agent client>`, matched against `aud` or `client_id`;
+- adds the agent client to the REST API authorizer (`CLIENT_ID` becomes
+  `<web client>,<agent client>`), so the platform can also call the Control
+  Plane and Data Layer REST APIs with the same access token — for example a
+  console that lists the namespaces, sources and metrics the user may see.
 
 Register the confidential client in the platform (client id, secret, discovery
 URL `https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/openid-configuration`,
-scopes `openid email profile`) and point the gateway target at the MCP
-runtime's invocations URL.
+scopes `openid email profile`) and point the platform at the MCP runtime's
+invocations URL (a gateway target, or an MCP tool that sends the user's token).
+
+**Example — AgentCore Launchpad.** Each Launchpad environment registers the
+agent client once as an OAuth2 Connection (an AgentCore Identity credential
+provider), whose callback URL goes into `SCL_AGENT_OAUTH_CALLBACK_URLS`. One
+consent per user, held by Launchpad's console workload identity, serves its
+COA console module (REST + Serve streaming) and its managed-Harness agents
+(the user's token is sent to the MCP runtime as `Authorization: Bearer`);
+Strands agents obtain their own per-agent consent through the same Connection.
 
 !!! warning "Access tokens carry no email"
     Cognito access tokens have `sub` and `cognito:groups` but no `email`, so a

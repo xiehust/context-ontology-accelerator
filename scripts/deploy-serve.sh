@@ -89,6 +89,10 @@ echo "--- Deploying CDK stack ---"
 
 CONTEXT="--context env=${ENV} --context context_manager_image_uri=${IMAGE_FULL}"
 [ -n "${SCL_PREFIX:-}" ] && CONTEXT="${CONTEXT} --context resource_prefix=${SCL_PREFIX}"
+# Agent OAuth (3LO) context, or refuse a deploy that would drop it — without it
+# the serve runtime's authorizer reverts to ID tokens only.
+# shellcheck source=scripts/agent-oauth-context.sh
+. "${REPO_ROOT}/scripts/agent-oauth-context.sh"
 
 APPROVAL="--require-approval=never"
 if [ "${ENV}" = "prod" ] || [ "${ENV}" = "production" ]; then

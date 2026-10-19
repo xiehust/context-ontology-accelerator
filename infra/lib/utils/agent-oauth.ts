@@ -10,8 +10,10 @@ export const AGENT_OAUTH_CLIENT_ID_PARAM = "agent-oauth-client-id";
 
 /**
  * Callback URLs configured for the opt-in agent OAuth client, or `[]` when
- * the feature is off. Accepts a JSON array or a single URL string
- * (`-c agentOauthCallbackUrls=https://...`).
+ * the feature is off. Accepts a JSON array, a single URL, or a
+ * comma-separated list (`-c agentOauthCallbackUrls=https://a,https://b` —
+ * the form scripts/deploy.sh passes from SCL_AGENT_OAUTH_CALLBACK_URLS, since
+ * an unquoted JSON array would be glob-expanded by the shell).
  */
 export function agentOauthCallbackUrls(node: Node): string[] {
   const raw = node.tryGetContext(CTX_AGENT_OAUTH_CALLBACK_URLS) as
@@ -22,7 +24,12 @@ export function agentOauthCallbackUrls(node: Node): string[] {
   let urls: unknown = raw;
   if (typeof raw === "string") {
     const trimmed = raw.trim();
-    urls = trimmed.startsWith("[") ? JSON.parse(trimmed) : [trimmed];
+    urls = trimmed.startsWith("[")
+      ? JSON.parse(trimmed)
+      : trimmed
+          .split(",")
+          .map((u) => u.trim())
+          .filter((u) => u.length > 0);
   }
   if (
     !Array.isArray(urls) ||

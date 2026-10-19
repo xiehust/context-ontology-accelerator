@@ -8,6 +8,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Template, Match } from "aws-cdk-lib/assertions";
 import { IdpAuthenticationStack } from "../../lib/stacks/foundation";
 import { McpStack } from "../../lib/stacks/services/mcp-stack";
+import { ApiStack } from "../../lib/stacks/services/api-stack";
 import { agentOauthCallbackUrls } from "../../lib/utils/agent-oauth";
 import { DEFAULT_RESOURCE_PREFIX, DEFAULT_ENV } from "../../lib/constants";
 
@@ -52,8 +53,9 @@ function mcpTemplate(extra: Record<string, unknown> = {}): Template {
 
 describe("agentOauthCallbackUrls", () => {
   const node = (v: unknown) =>
-    new cdk.App({ context: v === undefined ? {} : { agentOauthCallbackUrls: v } })
-      .node;
+    new cdk.App({
+      context: v === undefined ? {} : { agentOauthCallbackUrls: v },
+    }).node;
 
   it("is off by default", () => {
     expect(agentOauthCallbackUrls(node(undefined))).toEqual([]);
@@ -66,10 +68,22 @@ describe("agentOauthCallbackUrls", () => {
     ]);
   });
 
+  it("accepts a comma-separated list (the deploy.sh form)", () => {
+    const second = `${CALLBACK}-dev`;
+    expect(agentOauthCallbackUrls(node(`${CALLBACK}, ${second}`))).toEqual([
+      CALLBACK,
+      second,
+    ]);
+    expect(agentOauthCallbackUrls(node(`${CALLBACK},`))).toEqual([CALLBACK]);
+  });
+
   it("rejects non-HTTPS URLs", () => {
     expect(() => agentOauthCallbackUrls(node("http://example.com/cb"))).toThrow(
       /HTTPS/,
     );
+    expect(() =>
+      agentOauthCallbackUrls(node(`${CALLBACK},http://example.com/cb`)),
+    ).toThrow(/HTTPS/);
   });
 });
 
@@ -97,6 +111,56 @@ describe("agent OAuth disabled (default)", () => {
         }),
       },
     });
+  });
+});
+
+function apiTemplate(extra: Record<string, unknown> = {}): Template {
+  const app = new cdk.App({ context: { ...BASE_CONTEXT, ...extra } });
+  const dep = new cdk.Stack(app, "Dep", { env: ENV });
+  const vpc = new ec2.Vpc(dep, "Vpc", { maxAzs: 2 });
+  // ApiStack attaches DynamoEventSources, which need streams.
+  const table = (id: string) =>
+    new dynamodb.Table(dep, id, {
+      partitionKey: { name: "PK", type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+    });
+  return Template.fromStack(
+    new ApiStack(app, "TestApi", {
+      env: ENV,
+      allowedOrigin: "*",
+      vpc,
+      rolesTable: table("Roles"),
+      resourceRoleMappingsTable: table("RRM"),
+      cacheInvalidationTable: table("Cache"),
+    }),
+  );
+}
+
+function authorizerClientId(t: Template): string {
+  const fns = t.findResources("AWS::Lambda::Function", {
+    Properties: { FunctionName: Match.stringLikeRegexp(".*authorizer$") },
+  });
+  return JSON.stringify(
+    Object.values(fns)[0].Properties.Environment.Variables.CLIENT_ID,
+  );
+}
+
+describe("REST authorizer client allowlist", () => {
+  it("admits only the web client by default", () => {
+    const clientId = authorizerClientId(apiTemplate());
+    expect(clientId).toContain("userpoolclientid");
+    expect(clientId).not.toContain("agentoauthclientid");
+    expect(clientId).not.toContain("Fn::Join");
+  });
+
+  it("adds the agent client when agent OAuth is enabled", () => {
+    const clientId = authorizerClientId(
+      apiTemplate({ agentOauthCallbackUrls: CALLBACK }),
+    );
+    // Fn::Join of the two SSM parameter refs (logical ids drop the hyphens).
+    expect(clientId).toContain("Fn::Join");
+    expect(clientId).toContain("userpoolclientid");
+    expect(clientId).toContain("agentoauthclientid");
   });
 });
 

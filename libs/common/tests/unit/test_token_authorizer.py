@@ -363,3 +363,25 @@ class TestClientAllowlist:
     def test_blank_entries_ignored(self, _make_token, jwks_response):
         claims = self._verify(_make_token, jwks_response, " ,agent-client, ", client_id="agent-client")
         assert claims["client_id"] == "agent-client"
+
+    def test_agent_access_token_principal_is_username(self, _make_token, jwks_response):
+        # The REST authorizer path (web,agent allowlist): an agent-platform ACCESS
+        # token has no email, so the principal falls back to the Cognito username
+        # (= sub in a username-less pool) and grants must target User::<sub> or a group.
+        base = {"sub": "user-123", "iss": self._ISS, "exp": int(time.time()) + 3600}
+        token = _make_token(
+            {
+                **base,
+                "client_id": "agent-client",
+                "token_use": "access",
+                "username": "user-123",
+                "cognito:groups": ["Admin"],
+            }
+        )
+        authorizer = CognitoTokenAuthorizer(
+            user_pool_id="us-east-1_TestPool", region="us-east-1", client_id="web-client,agent-client"
+        )
+        with patch.object(authorizer, "_get_jwks", return_value=jwks_response):
+            result = authorizer.validate(f"Bearer {token}")
+        assert result.principal_id == "user-123"
+        assert result.groups == ["Admin"]

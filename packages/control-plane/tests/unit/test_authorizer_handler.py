@@ -402,6 +402,18 @@ class TestGetTokenAuthorizer:
         authorizer = _get_token_authorizer()
         assert isinstance(authorizer, CognitoTokenAuthorizer)
 
+    def test_client_id_allowlist_reaches_cognito_validator(self, monkeypatch):
+        # With agent OAuth enabled the API stack sets CLIENT_ID="<web>,<agent>";
+        # both must be on the validator's allowlist.
+        monkeypatch.setenv("JWKS_ISSUER", "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_ABC123")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("CLIENT_ID", "web-client,agent-client")
+
+        from coa_control_plane.authorization.handler import _get_token_authorizer
+
+        authorizer = _get_token_authorizer()
+        assert authorizer._audiences == frozenset({"web-client", "agent-client"})
+
     def test_oidc_with_custom_group_claim(self, monkeypatch):
         monkeypatch.setenv("JWKS_ISSUER", "https://login.okta.com/oauth2/default")
         monkeypatch.setenv("JWKS_URI", "https://login.okta.com/oauth2/default/v1/keys")
