@@ -1,0 +1,7 @@
+department_code,name_cn,name_en,head_employee_id,city
+ENG,研发中心,Engineering,EMP-1002,上海
+PRD,产品部,Product,EMP-1015,上海
+HR,人力资源部,HR Operations,EMP-1008,上海
+FIN,财务部,Finance,EMP-1011,上海
+SAL,销售部,Sales,EMP-1020,北京
+CS,客户成功部,Customer Success,EMP-1031,深圳
